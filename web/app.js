@@ -1,4 +1,5 @@
-import { makeQuest, uid, progress, sortQuests, filterQuests, matchesPriority, isUnlocked, normalizeTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
+import { makeQuest, uid, progress, matchesPriority, isUnlocked, normalizeTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
+import { getQuestView } from './list-view.js';
 import { loadQuests, saveQuests, loadAccountJournal, saveAccountJournal } from './storage.js';
 import { JournalSync, signature } from './sync.js';
 import { createCloud } from './cloud.js';
@@ -80,19 +81,14 @@ function render() {
   $('#reward-nav-count').textContent = counts.completed;
   $('#list-title').textContent = { draft: '아직 쓰고 있는 이야기', active: '진행 중인 퀘스트', completed: '해낸 모험과 받은 선물' }[state.tab];
   $('#quest-list-panel').setAttribute('aria-labelledby', `tab-${state.tab}`);
-  const inTab = state.quests.filter(q => q.status === state.tab);
-  const matches = filterQuests(inTab, state.priorityFilter, state.query);
-  const filtered = state.tab === 'active' ? sortQuests(matches, state.activeSort) : matches;
-  document.querySelectorAll('[data-priority-filter]').forEach(button => {
-    const selected = button.dataset.priorityFilter === state.priorityFilter;
-    button.classList.toggle('active', selected);
-    button.setAttribute('aria-pressed', String(selected));
-  });
-  $('#quest-sort-control').hidden = state.tab !== 'active';
+  const view = getQuestView(state.quests, state);
+  const filtered = view.quests;
+  $('#quest-filter').value = state.priorityFilter;
+  $('#quest-list-controls').hidden = !view.controlsVisible;
   $('#quest-sort').value = state.activeSort;
   if (!filtered.some(q => q.id === state.selectedId)) state.selectedId = filtered[0]?.id || null;
-  const constrained = state.priorityFilter !== 'all' || state.query.trim();
-  $('#list-count').textContent = constrained ? `${filtered.length} / ${inTab.length}개의 이야기` : `${filtered.length}개의 이야기`;
+  const constrained = view.constrained;
+  $('#list-count').textContent = constrained ? `${filtered.length} / ${view.total}개의 이야기` : `${filtered.length}개의 이야기`;
   $('#quest-list').innerHTML = filtered.length ? filtered.map(renderCard).join('') : renderEmptyList();
   const selected = filtered.find(q => q.id === state.selectedId);
   if (detailPhotoUrl) { URL.revokeObjectURL(detailPhotoUrl); detailPhotoUrl = null; }
@@ -116,7 +112,7 @@ function renderCard(q) {
 }
 
 function renderEmptyList() {
-  if (state.priorityFilter !== 'all') return `<div class="empty-state">${icon('search')}<h3>조건에 맞는 퀘스트가 없어요</h3><p>검색어나 중요·긴급 필터를 바꿔보세요.</p><button class="text-button" data-action="clear-filters">${state.query.trim() ? '필터·검색 초기화' : '전체 퀘스트 보기'}</button></div>`;
+  if (state.tab === 'active' && state.priorityFilter !== 'all') return `<div class="empty-state">${icon('search')}<h3>조건에 맞는 퀘스트가 없어요</h3><p>검색어나 중요·긴급 필터를 바꿔보세요.</p><button class="text-button" data-action="clear-filters">${state.query.trim() ? '필터·검색 초기화' : '전체 퀘스트 보기'}</button></div>`;
   if (state.query.trim()) return `<div class="empty-state">${icon('search')}<h3>아직 찾지 못했어요</h3><p>다른 단어로 퀘스트를 찾아보세요.</p><button class="text-button" data-action="clear-search">검색 지우기</button></div>`;
   const copy = { draft: ['아직 빈 페이지예요', '새 퀘스트를 쓰다가 잠시 쉬어가도 괜찮아요.'], active: ['새 모험을 시작해볼까요?', '오늘 해보고 싶은 아주 작은 일부터 적어보세요.'], completed: ['선물을 기다리는 페이지', '퀘스트를 마치고 보상을 기록하면 여기에 모여요.'] }[state.tab];
   return `<div class="empty-state">${icon(state.tab === 'completed' ? 'gift' : 'book')}<h3>${copy[0]}</h3><p>${copy[1]}</p><button class="button button-outline button-small" data-action="new">${icon('plus')}퀘스트 만들기</button></div>`;
@@ -342,10 +338,6 @@ document.addEventListener('click', async event => {
     if (!state.ready) return;
     if (accountSwitching) { toast('계정의 일지를 여는 중이에요. 잠시만 기다려주세요.'); return; }
     if (target.dataset.tab) { switchTab(target.dataset.tab); return; }
-    if (target.dataset.priorityFilter) {
-      state.priorityFilter = target.dataset.priorityFilter; state.selectedId = null;
-      $('#journal-body').classList.remove('show-detail'); render(); return;
-    }
     if (target.dataset.nav) { switchTab(target.dataset.nav === 'rewards' ? 'completed' : 'active'); return; }
     if (target.dataset.quest) {
       state.selectedId = target.dataset.quest; render();
@@ -377,7 +369,7 @@ document.addEventListener('click', async event => {
     if (action === 'clear-search') { state.query = ''; $('#quest-search').value = ''; render(); $('#quest-search').focus(); }
     if (action === 'clear-filters') {
       state.priorityFilter = 'all'; state.query = ''; $('#quest-search').value = '';
-      render(); $('[data-priority-filter="all"]').focus();
+      render(); $('#quest-filter').focus();
     }
     if (action === 'help') { $('#npc-message').textContent = helpMessages.welcome; $('#help-dialog').showModal(); }
     if (action === 'settings') {
@@ -430,6 +422,13 @@ document.addEventListener('click', async event => {
 
 $('#quest-search').addEventListener('input', event => { state.query = event.target.value; render(); });
 $('#quest-sort').addEventListener('change', event => { state.activeSort = event.target.value; render(); });
+function changeQuestFilter(event) {
+  if (!state.ready || state.tab !== 'active' || state.priorityFilter === event.currentTarget.value) return;
+  state.priorityFilter = event.currentTarget.value; state.selectedId = null;
+  $('#journal-body').classList.remove('show-detail'); render();
+}
+$('#quest-filter').addEventListener('input', changeQuestFilter);
+$('#quest-filter').addEventListener('change', changeQuestFilter);
 $('.tabs').addEventListener('keydown', event => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
   event.preventDefault();

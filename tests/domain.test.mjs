@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { Blob } from 'node:buffer';
+import { getQuestView } from '../web/list-view.js';
 import { makeQuest, progress, sortQuests, filterQuests, isUnlocked, toggleTask, toggleGoal, startQuest, canClaim, claimReward, normalizeTasks, validateQuests, exampleQuests } from '../web/domain.js';
 
 // Also runs in JavaScript verification environments that omit the optional web globals.
@@ -265,6 +266,45 @@ test('중요 필터 안에서도 긴급 표시가 있는 기록을 먼저 정렬
     makeQuest({ id: 'urgent-only', urgent: true, createdAt: '2026-05-01T00:00:00Z' })
   ];
   assert.deepEqual(sortQuests(filterQuests(input, 'important')).map(q => q.id), ['both-old', 'important-new']);
+});
+
+test('진행 중 탭에서만 필터·정렬을 적용하고 컨트롤을 표시한다', () => {
+  const input = [
+    makeQuest({ id: 'plain', status: 'active' }),
+    makeQuest({ id: 'urgent', status: 'active', urgent: true }),
+    makeQuest({ id: 'draft', status: 'draft' })
+  ];
+  const view = getQuestView(input, { tab: 'active', priorityFilter: 'urgent' });
+  assert.deepEqual(view.quests.map(q => q.id), ['urgent']);
+  assert.equal(view.total, 2); assert.equal(view.constrained, true); assert.equal(view.controlsVisible, true);
+});
+test('작성 중·완료됨은 진행 중 필터 선택의 영향을 받지 않는다', () => {
+  for (const tab of ['draft', 'completed']) {
+    const input = [
+      makeQuest({ id: 'first', status: tab, createdAt: '2026-01-01T00:00:00Z' }),
+      makeQuest({ id: 'second', status: tab, createdAt: '2026-02-01T00:00:00Z' })
+    ];
+    const view = getQuestView(input, { tab, priorityFilter: 'both', activeSort: 'newest' });
+    assert.deepEqual(view.quests.map(q => q.id), ['first', 'second']);
+    assert.equal(view.total, 2); assert.equal(view.constrained, false); assert.equal(view.controlsVisible, false);
+  }
+});
+test('다른 탭을 다녀와도 진행 중 탭의 필터를 다시 적용할 수 있다', () => {
+  const input = [
+    makeQuest({ id: 'urgent', status: 'active', urgent: true }),
+    makeQuest({ id: 'normal', status: 'active' }), makeQuest({ id: 'draft', status: 'draft' })
+  ];
+  const state = { tab: 'active', priorityFilter: 'urgent' };
+  assert.deepEqual(getQuestView(input, state).quests.map(q => q.id), ['urgent']);
+  assert.deepEqual(getQuestView(input, { ...state, tab: 'draft' }).quests.map(q => q.id), ['draft']);
+  assert.deepEqual(getQuestView(input, state).quests.map(q => q.id), ['urgent']);
+  assert.equal(state.priorityFilter, 'urgent');
+});
+test('필터가 비활성인 다른 탭에서도 검색은 그대로 동작한다', () => {
+  const input = [makeQuest({ id: 'match', title: '산책', status: 'draft' }), makeQuest({ id: 'other', title: '독서', status: 'draft' })];
+  const view = getQuestView(input, { tab: 'draft', priorityFilter: 'urgent', query: '산책' });
+  assert.deepEqual(view.quests.map(q => q.id), ['match']);
+  assert.equal(view.total, 2); assert.equal(view.constrained, true); assert.equal(view.controlsVisible, false);
 });
 
 console.log(`${passed.length} quest behavior tests passed.`);
