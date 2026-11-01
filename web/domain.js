@@ -17,6 +17,8 @@ export function progress(quest) {
 
 export function sortQuests(quests, order = 'newest') {
   return [...quests].sort((a, b) => {
+    const urgency = Number(b.urgent === true) - Number(a.urgent === true);
+    if (urgency) return urgency;
     const newest = Date.parse(b.createdAt) - Date.parse(a.createdAt);
     const tie = a.id.localeCompare(b.id);
     if (order === 'oldest') return -newest || tie;
@@ -26,6 +28,20 @@ export function sortQuests(quests, order = 'newest') {
     }
     return newest || tie;
   });
+}
+
+export function matchesPriority(quest, filter = 'all') {
+  const important = quest.important === true, urgent = quest.urgent === true;
+  if (filter === 'important') return important;
+  if (filter === 'urgent') return urgent;
+  if (filter === 'both') return important && urgent;
+  return true;
+}
+
+export function filterQuests(quests, filter = 'all', query = '') {
+  const search = query.trim().toLocaleLowerCase();
+  return quests.filter(quest => matchesPriority(quest, filter) &&
+    `${quest.title} ${quest.description} ${quest.reward}`.toLocaleLowerCase().includes(search));
 }
 
 export function isUnlocked(quest, taskId) {

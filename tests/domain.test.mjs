@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Blob } from 'node:buffer';
-import { makeQuest, progress, sortQuests, isUnlocked, toggleTask, toggleGoal, startQuest, canClaim, claimReward, normalizeTasks, validateQuests, exampleQuests } from '../web/domain.js';
+import { makeQuest, progress, sortQuests, filterQuests, isUnlocked, toggleTask, toggleGoal, startQuest, canClaim, claimReward, normalizeTasks, validateQuests, exampleQuests } from '../web/domain.js';
 
 // Also runs in JavaScript verification environments that omit the optional web globals.
 globalThis.Blob ??= Blob;
@@ -214,6 +214,57 @@ test('진행도가 같으면 최신 작성순으로 정렬하고 작성 시각�
   const b = makeQuest({ id: 'b', createdAt: '2026-02-01T00:00:00Z' });
   assert.deepEqual(sortQuests([old, b, a], 'progress').map(q => q.id), ['a', 'b', 'old']);
   assert.deepEqual(sortQuests([a, old, b], 'progress').map(q => q.id), ['a', 'b', 'old']);
+});
+
+test('모든 정렬 옵션에서 긴급 그룹을 먼저 보여주고 각 그룹의 정렬은 유지한다', () => {
+  const input = [
+    makeQuest({ id: 'normal-new', important: true, goalDone: true, createdAt: '2026-04-01T00:00:00Z' }),
+    makeQuest({ id: 'urgent-old', urgent: true, createdAt: '2026-02-01T00:00:00Z' }),
+    makeQuest({ id: 'normal-old', createdAt: '2026-01-01T00:00:00Z' }),
+    makeQuest({ id: 'urgent-new', urgent: true, goalDone: true, createdAt: '2026-03-01T00:00:00Z' })
+  ];
+  const expected = {
+    newest: ['urgent-new', 'urgent-old', 'normal-new', 'normal-old'],
+    oldest: ['urgent-old', 'urgent-new', 'normal-old', 'normal-new'],
+    progress: ['urgent-new', 'urgent-old', 'normal-new', 'normal-old']
+  };
+  for (const [order, ids] of Object.entries(expected)) assert.deepEqual(sortQuests(input, order).map(q => q.id), ids);
+  assert.deepEqual(input.map(q => q.id), ['normal-new', 'urgent-old', 'normal-old', 'urgent-new']);
+});
+test('중요·긴급 필터는 단독 표시와 중복 표시를 구분하며 둘 다 필터는 AND로 동작한다', () => {
+  const input = [
+    makeQuest({ id: 'plain' }), makeQuest({ id: 'important', important: true }),
+    makeQuest({ id: 'urgent', urgent: true }), makeQuest({ id: 'both', important: true, urgent: true })
+  ];
+  assert.deepEqual(filterQuests(input).map(q => q.id), ['plain', 'important', 'urgent', 'both']);
+  assert.deepEqual(filterQuests(input, 'important').map(q => q.id), ['important', 'both']);
+  assert.deepEqual(filterQuests(input, 'urgent').map(q => q.id), ['urgent', 'both']);
+  assert.deepEqual(filterQuests(input, 'both').map(q => q.id), ['both']);
+  assert.equal(input.length, 4);
+});
+test('표시 필터와 제목·이야기·보상 검색을 함께 적용한다', () => {
+  const input = [
+    makeQuest({ id: 'title', title: 'ALPHA 산책', urgent: true }),
+    makeQuest({ id: 'story', description: 'alpha 이야기', important: true, urgent: true }),
+    makeQuest({ id: 'reward', reward: 'alpha 휴식', urgent: true }),
+    makeQuest({ id: 'excluded', title: 'alpha', important: true })
+  ];
+  assert.deepEqual(filterQuests(input, 'urgent', '  Alpha  ').map(q => q.id), ['title', 'story', 'reward']);
+  assert.deepEqual(filterQuests(input, 'both', 'alpha').map(q => q.id), ['story']);
+});
+test('표시가 없는 이전 기록은 전체에서만 보이며 빈 필터 결과도 안전하게 정렬한다', () => {
+  const old = makeQuest({ id: 'old' }); delete old.important; delete old.urgent;
+  assert.deepEqual(filterQuests([old], 'all').map(q => q.id), ['old']);
+  for (const filter of ['important', 'urgent', 'both']) assert.equal(filterQuests([old], filter).length, 0);
+  assert.equal(sortQuests(filterQuests([old], 'both')).length, 0);
+});
+test('중요 필터 안에서도 긴급 표시가 있는 기록을 먼저 정렬한다', () => {
+  const input = [
+    makeQuest({ id: 'important-new', important: true, createdAt: '2026-04-01T00:00:00Z' }),
+    makeQuest({ id: 'both-old', important: true, urgent: true, createdAt: '2026-01-01T00:00:00Z' }),
+    makeQuest({ id: 'urgent-only', urgent: true, createdAt: '2026-05-01T00:00:00Z' })
+  ];
+  assert.deepEqual(sortQuests(filterQuests(input, 'important')).map(q => q.id), ['both-old', 'important-new']);
 });
 
 console.log(`${passed.length} quest behavior tests passed.`);

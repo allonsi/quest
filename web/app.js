@@ -1,4 +1,4 @@
-import { makeQuest, uid, progress, sortQuests, isUnlocked, normalizeTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
+import { makeQuest, uid, progress, sortQuests, filterQuests, matchesPriority, isUnlocked, normalizeTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
 import { loadQuests, saveQuests, loadAccountJournal, saveAccountJournal } from './storage.js';
 import { JournalSync, signature } from './sync.js';
 import { createCloud } from './cloud.js';
@@ -7,7 +7,7 @@ import { cloudConfig } from './config.js';
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
-const state = { quests: [], tab: 'active', activeSort: 'newest', selectedId: null, query: '', editorId: null, rewardId: null, ready: false };
+const state = { quests: [], tab: 'active', activeSort: 'newest', priorityFilter: 'all', selectedId: null, query: '', editorId: null, rewardId: null, ready: false };
 const categoryIcons = { '일상': 'leaf', '공부': 'book', '건강': 'spark', '나를 위한 일': 'gift' };
 let writeQueue = Promise.resolve();
 let draftTimer, toastTimer, editorTasks = [], rewardPhoto = null, photoJob = 0, photoPending = false;
@@ -80,16 +80,25 @@ function render() {
   $('#reward-nav-count').textContent = counts.completed;
   $('#list-title').textContent = { draft: '아직 쓰고 있는 이야기', active: '진행 중인 퀘스트', completed: '해낸 모험과 받은 선물' }[state.tab];
   $('#quest-list-panel').setAttribute('aria-labelledby', `tab-${state.tab}`);
-  const matches = state.quests.filter(q => q.status === state.tab && `${q.title} ${q.description} ${q.reward}`.toLocaleLowerCase().includes(state.query.toLocaleLowerCase()));
+  const inTab = state.quests.filter(q => q.status === state.tab);
+  const matches = filterQuests(inTab, state.priorityFilter, state.query);
   const filtered = state.tab === 'active' ? sortQuests(matches, state.activeSort) : matches;
+  document.querySelectorAll('[data-priority-filter]').forEach(button => {
+    const selected = button.dataset.priorityFilter === state.priorityFilter;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
   $('#quest-sort-control').hidden = state.tab !== 'active';
   $('#quest-sort').value = state.activeSort;
   if (!filtered.some(q => q.id === state.selectedId)) state.selectedId = filtered[0]?.id || null;
-  $('#list-count').textContent = `${filtered.length}개의 이야기`;
+  const constrained = state.priorityFilter !== 'all' || state.query.trim();
+  $('#list-count').textContent = constrained ? `${filtered.length} / ${inTab.length}개의 이야기` : `${filtered.length}개의 이야기`;
   $('#quest-list').innerHTML = filtered.length ? filtered.map(renderCard).join('') : renderEmptyList();
   const selected = filtered.find(q => q.id === state.selectedId);
   if (detailPhotoUrl) { URL.revokeObjectURL(detailPhotoUrl); detailPhotoUrl = null; }
-  $('#quest-detail').innerHTML = selected ? renderDetail(selected) : `<div class="empty-state empty-detail">${icon('book')}<h3>다음 모험을 기다리는 페이지</h3><p>작은 일 하나부터 시작해볼까요?<br>나만의 퀘스트를 만들고 이야기를 채워보세요.</p><button class="button button-outline" data-action="new">${icon('plus')}새 퀘스트 만들기</button></div>`;
+  $('#quest-detail').innerHTML = selected ? renderDetail(selected) : constrained
+    ? `<div class="empty-state empty-detail">${icon('search')}<h3>조건에 맞는 퀘스트가 없어요</h3><p>검색어나 중요·긴급 필터를 바꿔보세요.</p></div>`
+    : `<div class="empty-state empty-detail">${icon('book')}<h3>다음 모험을 기다리는 페이지</h3><p>작은 일 하나부터 시작해볼까요?<br>나만의 퀘스트를 만들고 이야기를 채워보세요.</p><button class="button button-outline" data-action="new">${icon('plus')}새 퀘스트 만들기</button></div>`;
 }
 
 function renderQuestFlags(quest) {
@@ -107,7 +116,8 @@ function renderCard(q) {
 }
 
 function renderEmptyList() {
-  if (state.query) return `<div class="empty-state">${icon('search')}<h3>아직 찾지 못했어요</h3><p>다른 단어로 퀘스트를 찾아보세요.</p><button class="text-button" data-action="clear-search">검색 지우기</button></div>`;
+  if (state.priorityFilter !== 'all') return `<div class="empty-state">${icon('search')}<h3>조건에 맞는 퀘스트가 없어요</h3><p>검색어나 중요·긴급 필터를 바꿔보세요.</p><button class="text-button" data-action="clear-filters">${state.query.trim() ? '필터·검색 초기화' : '전체 퀘스트 보기'}</button></div>`;
+  if (state.query.trim()) return `<div class="empty-state">${icon('search')}<h3>아직 찾지 못했어요</h3><p>다른 단어로 퀘스트를 찾아보세요.</p><button class="text-button" data-action="clear-search">검색 지우기</button></div>`;
   const copy = { draft: ['아직 빈 페이지예요', '새 퀘스트를 쓰다가 잠시 쉬어가도 괜찮아요.'], active: ['새 모험을 시작해볼까요?', '오늘 해보고 싶은 아주 작은 일부터 적어보세요.'], completed: ['선물을 기다리는 페이지', '퀘스트를 마치고 보상을 기록하면 여기에 모여요.'] }[state.tab];
   return `<div class="empty-state">${icon(state.tab === 'completed' ? 'gift' : 'book')}<h3>${copy[0]}</h3><p>${copy[1]}</p><button class="button button-outline button-small" data-action="new">${icon('plus')}퀘스트 만들기</button></div>`;
 }
@@ -192,7 +202,7 @@ async function openEditor(id) {
   await writeQueue;
   let quest = state.quests.find(q => q.id === id);
   if (quest?.status === 'completed') { finishEditing(); return; }
-  if (!quest) quest = makeQuest();
+  if (!quest) { quest = makeQuest(); state.priorityFilter = 'all'; }
   quest = { ...quest, status: 'draft', rewardRecord: null };
   await updateQuests(quests => replaceQuest(quests, quest), false);
   state.editorId = quest.id; state.selectedId = quest.id; state.tab = 'draft'; state.query = '';
@@ -332,6 +342,10 @@ document.addEventListener('click', async event => {
     if (!state.ready) return;
     if (accountSwitching) { toast('계정의 일지를 여는 중이에요. 잠시만 기다려주세요.'); return; }
     if (target.dataset.tab) { switchTab(target.dataset.tab); return; }
+    if (target.dataset.priorityFilter) {
+      state.priorityFilter = target.dataset.priorityFilter; state.selectedId = null;
+      $('#journal-body').classList.remove('show-detail'); render(); return;
+    }
     if (target.dataset.nav) { switchTab(target.dataset.nav === 'rewards' ? 'completed' : 'active'); return; }
     if (target.dataset.quest) {
       state.selectedId = target.dataset.quest; render();
@@ -361,6 +375,10 @@ document.addEventListener('click', async event => {
     if (action === 'claim') await openReward();
     if (action === 'back') $('#journal-body').classList.remove('show-detail');
     if (action === 'clear-search') { state.query = ''; $('#quest-search').value = ''; render(); $('#quest-search').focus(); }
+    if (action === 'clear-filters') {
+      state.priorityFilter = 'all'; state.query = ''; $('#quest-search').value = '';
+      render(); $('[data-priority-filter="all"]').focus();
+    }
     if (action === 'help') { $('#npc-message').textContent = helpMessages.welcome; $('#help-dialog').showModal(); }
     if (action === 'settings') {
       renderCloudStatus();
@@ -453,6 +471,7 @@ $('#quest-form').addEventListener('submit', async event => {
   try {
     const quest = startQuest(readDraft());
     await updateQuests(quests => replaceQuest(quests, quest), false);
+    if (!matchesPriority(quest, state.priorityFilter)) state.priorityFilter = 'all';
     state.editorId = null; state.tab = 'active'; state.selectedId = quest.id;
     $('#editor-dialog').close(); render(); $('#journal-body').classList.add('show-detail');
     finishEditing();
@@ -580,7 +599,7 @@ function receiveSession(session) {
         ? await journal.openAccount(`${new URL(cloud.url).hostname}:${nextUser.id}`, cloud.forUser(nextUser))
         : await journal.openGuest(exampleQuests);
       accountUser = nextUser; state.quests = quests;
-      state.query = ''; $('#quest-search').value = ''; state.selectedId = null; state.tab = 'active';
+      state.query = ''; state.priorityFilter = 'all'; $('#quest-search').value = ''; state.selectedId = null; state.tab = 'active';
       $('#journal-body').classList.remove('show-detail');
       cloudPhase = nextUser ? 'pending' : 'local'; cloudMessage = '';
       render(); renderCloudStatus();
