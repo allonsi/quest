@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Blob } from 'node:buffer';
-import { makeQuest, progress, isUnlocked, toggleTask, startQuest, canClaim, claimReward, normalizeTasks, validateQuests, exampleQuests } from '../web/domain.js';
+import { makeQuest, progress, isUnlocked, toggleTask, toggleGoal, startQuest, canClaim, claimReward, normalizeTasks, validateQuests, exampleQuests } from '../web/domain.js';
 
 // Also runs in JavaScript verification environments that omit the optional web globals.
 globalThis.Blob ??= Blob;
@@ -39,9 +39,9 @@ test('상태 변경은 입력 객체를 수정하지 않는다', () => {
   const q = quest([task('첫')]); toggleTask(q, '첫');
   assert.equal(q.tasks[0].done, false);
 });
-test('빈 퀘스트는 0%이며 보상을 받을 수 없다', () => {
+test('단계 없는 퀘스트도 완료 체크 전에는 0%이며 보상을 받을 수 없다', () => {
   const q = quest([]);
-  assert.deepEqual(progress(q), { total: 0, done: 0, percent: 0 });
+  assert.deepEqual(progress(q), { total: 1, done: 0, percent: 0 });
   assert.equal(canClaim(q), false);
 });
 test('진행률 100%도 보상 기록 전에는 진행 중이다', () => {
@@ -65,11 +65,82 @@ test('사진만으로도 보상 완료 기록을 남길 수 있다', () => {
 test('작성 중인 퀘스트는 체크할 수 없다', () => {
   assert.throws(() => toggleTask(makeQuest({ tasks: [task('작성 중')] }), '작성 중'));
 });
-test('이름, 발걸음, 보상 없이 모험을 시작할 수 없다', () => {
+test('이름과 보상은 필수이다', () => {
   assert.throws(() => startQuest(makeQuest()));
-  assert.throws(() => startQuest(makeQuest({ title: '제목', reward: '보상' })));
+  assert.throws(() => startQuest(makeQuest({ reward: '보상' })));
   assert.throws(() => startQuest(makeQuest({ title: '제목', tasks: [task('할 일')] })));
-  assert.throws(() => startQuest(makeQuest({ title: '제목', reward: '보상', tasks: [{ ...task('할 일'), title: '  ' }] })));
+});
+test('기존 초안에 빈 하위·연계 단계가 남아 있어도 단계 없이 시작할 수 있다', () => {
+  const draft = makeQuest({ title: '산책하기', reward: '따뜻한 차', tasks: [
+    { ...task('하위', 'free'), title: '' }, { ...task('연계'), title: ' \n\t ' }
+  ] });
+  const q = startQuest(draft);
+  assert.equal(q.status, 'active'); assert.equal(q.tasks.length, 0);
+  assert.equal(q.goalDone, false); assert.equal(canClaim(q), false);
+  assert.equal(draft.tasks.length, 2);
+  assert.equal(validateQuests([q])[0].tasks.length, 0);
+});
+test('시작할 때 빈 단계만 제외하고 작성한 단계의 내용·순서·진행을 유지한다', () => {
+  const draft = makeQuest({ title: '산책하기', reward: '따뜻한 차', tasks: [
+    { ...task('빈 하위', 'free'), title: '' },
+    { ...task('준비', 'chain', true), title: '  신발 신기  ' },
+    { ...task('빈 연계'), title: '  ' },
+    { ...task('산책', 'chain', true), title: '  산책하기  ' },
+  ] });
+  const q = startQuest(draft);
+  assert.deepEqual(q.tasks.map(t => [t.id, t.title, t.done]), [
+    ['준비', '신발 신기', true], ['산책', '산책하기', true]
+  ]);
+  assert.equal(draft.tasks.length, 4); assert.equal(draft.tasks[1].title, '  신발 신기  ');
+  assert.equal(validateQuests([q])[0].tasks.length, 2);
+});
+test('빈 단계는 작성 중 백업에만 허용하고 진행 중 기록에는 허용하지 않는다', () => {
+  const draft = makeQuest({ title: '산책하기', reward: '따뜻한 차', tasks: [{ ...task('빈 단계'), title: '' }] });
+  assert.equal(validateQuests([draft])[0].status, 'draft');
+  assert.throws(() => validateQuests([{ ...draft, status: 'active' }]));
+});
+test('발걸음 없이 이름과 보상으로 퀘스트를 시작할 수 있다', () => {
+  const q = startQuest(makeQuest({ title: '  산책하기  ', reward: '  따뜻한 차  ' }));
+  assert.equal(q.title, '산책하기'); assert.equal(q.status, 'active');
+  assert.deepEqual(q.tasks, []); assert.equal(q.goalDone, false);
+  assert.equal(canClaim(q), false);
+});
+test('단계 없는 퀘스트는 완료 체크와 해제를 할 수 있으며 원본을 수정하지 않는다', () => {
+  const q = startQuest(makeQuest({ title: '산책하기', reward: '따뜻한 차' }));
+  const checked = toggleGoal(q);
+  assert.equal(q.goalDone, false);
+  assert.deepEqual(progress(checked), { total: 1, done: 1, percent: 100 });
+  assert.equal(canClaim(checked), true); assert.equal(checked.status, 'active');
+  const unchecked = toggleGoal(checked);
+  assert.equal(progress(unchecked).percent, 0); assert.equal(canClaim(unchecked), false);
+});
+test('전체 완료 체크는 진행 중인 단계 없는 퀘스트에만 허용한다', () => {
+  assert.throws(() => toggleGoal(makeQuest()));
+  assert.throws(() => toggleGoal(quest([task('할 일')])));
+  const completed = claimReward(toggleGoal(quest([])), '차 한 잔을 마셨다');
+  assert.throws(() => toggleGoal(completed));
+});
+test('단계 없는 퀘스트도 완료 체크와 보상 기록을 거쳐 백업할 수 있다', () => {
+  const q = quest([]);
+  assert.throws(() => claimReward(q, '아직 안 했어요'));
+  assert.throws(() => claimReward(toggleGoal(q), '  '));
+  const completed = claimReward(toggleGoal(q), '  차 한 잔  ');
+  const restored = validateQuests(JSON.parse(JSON.stringify([completed])))[0];
+  assert.equal(restored.status, 'completed'); assert.equal(restored.goalDone, true);
+  assert.deepEqual(restored.tasks, []); assert.equal(restored.rewardRecord.note, '차 한 잔');
+  assert.equal(progress(restored).percent, 100);
+  assert.throws(() => validateQuests([{ ...completed, goalDone: false }]));
+});
+test('기존 백업은 새 필드 없이 읽고 잘못된 완료 체크 형식은 거부한다', () => {
+  const old = quest([task('할 일')]); delete old.goalDone;
+  const restored = validateQuests([old])[0];
+  assert.equal(restored.goalDone, false); assert.deepEqual(restored.tasks, old.tasks);
+  assert.throws(() => validateQuests([{ ...quest([]), goalDone: 'true' }]));
+});
+test('단계를 추가하면 전체 완료 체크가 개별 단계의 완료를 대신하지 않는다', () => {
+  const q = startQuest({ ...toggleGoal(quest([])), tasks: [task('새 단계')] });
+  assert.equal(q.goalDone, false); assert.equal(canClaim(q), false);
+  assert.equal(progress(q).percent, 0);
 });
 test('시작 시 공백을 정리하고 편집 후 연계 순서를 바로잡는다', () => {
   const q = startQuest(makeQuest({ title: ' 모험 ', reward: ' 쉼 ', tasks: [task('첫'), task('둘', 'chain', true)] }));

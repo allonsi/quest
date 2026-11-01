@@ -1,9 +1,9 @@
-const CACHE = 'quest-maker-shell-v5';
-const SHELL = ['./', './index.html', './styles.css', './app.js', './domain.js', './storage.js',
-  './manifest.webmanifest', './assets/icon.svg', './assets/guide.svg', './assets/icon-192.png', './assets/icon-512.png',
+const CACHE = 'quest-maker-shell-v11';
+const SHELL = ['./', './index.html', './register-sw.js', './styles.css', './app.js', './domain.js', './storage.js',
+  './manifest.webmanifest', './assets/icon.svg', './assets/guide.png', './assets/icon-192.png', './assets/icon-512.png',
   './config.js', './cloud.js', './sync.js', './vendor/supabase-2.118.0.js'];
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL.map(path => new Request(path, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', event => {
   event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('quest-maker-shell-') && key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim()));

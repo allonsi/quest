@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Blob, Buffer } from 'node:buffer';
 import { webcrypto } from 'node:crypto';
 import { TextEncoder } from 'node:util';
-import { makeQuest, uid, validateQuests } from '../web/domain.js';
+import { makeQuest, uid, validateQuests, startQuest, toggleGoal, claimReward, canClaim } from '../web/domain.js';
 import { JournalSync } from '../web/sync.js';
 import { createAuthActions, validateCloudConfig, QuestRemote } from '../web/cloud.js';
 
@@ -64,6 +64,32 @@ await test('새 퀘스트를 다른 기기에서 불러온다', async () => {
   const s = server(), a = await device(s.forUser('A')), b = await device(s.forUser('A'));
   await a.save([quest('기기 간 기록')]); await a.sync(); await b.sync();
   assert.equal(b.quests[0].title, '기기 간 기록'); assert.equal(a.pendingCount, 0);
+});
+await test('단계 없는 퀘스트의 완료 체크와 보상 기록이 다른 기기에 보존된다', async () => {
+  const s = server(), a = await device(s.forUser('A')), b = await device(s.forUser('A'));
+  await a.save([startQuest(makeQuest({ title: '산책하기', reward: '따뜻한 차' }))]);
+  await a.sync(); await b.sync();
+  assert.equal(b.quests[0].tasks.length, 0); assert.equal(canClaim(b.quests[0]), false);
+  await b.mutate(qs => { qs[0] = toggleGoal(qs[0]); });
+  await b.sync(); await a.sync();
+  assert.equal(a.quests[0].goalDone, true); assert.equal(canClaim(a.quests[0]), true);
+  await a.mutate(qs => { qs[0] = claimReward(qs[0], '차를 마시며 쉬었다'); });
+  await a.sync(); await b.sync();
+  assert.equal(b.quests[0].status, 'completed'); assert.equal(b.quests[0].goalDone, true);
+  assert.equal(b.quests[0].rewardRecord.note, '차를 마시며 쉬었다');
+});
+await test('다른 기기에서 받은 빈 단계 초안을 시작하면 빈 항목이 동기화 기록에서도 제외된다', async () => {
+  const s = server(), a = await device(s.forUser('A')), b = await device(s.forUser('A'));
+  const draft = makeQuest({ title: '산책하기', reward: '따뜻한 차', tasks: [
+    { id: uid(), title: '', kind: 'free', done: false },
+    { id: uid(), title: '  ', kind: 'chain', done: false }
+  ] });
+  await a.save([draft]); await a.sync(); await b.sync();
+  assert.equal(b.quests[0].tasks.length, 2);
+  await b.mutate(qs => { qs[0] = startQuest(qs[0]); });
+  await b.sync(); await a.sync();
+  assert.equal(a.quests[0].status, 'active'); assert.equal(a.quests[0].tasks.length, 0);
+  assert.equal(canClaim(a.quests[0]), false);
 });
 await test('서로 다른 퀘스트 수정은 덮어쓰기 없이 합쳐진다', async () => {
   const s = server(), a = await device(s.forUser('A')), b = await device(s.forUser('A'));

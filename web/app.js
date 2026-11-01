@@ -1,4 +1,4 @@
-import { makeQuest, uid, progress, isUnlocked, normalizeTasks, toggleTask, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
+import { makeQuest, uid, progress, isUnlocked, normalizeTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
 import { loadQuests, saveQuests, loadAccountJournal, saveAccountJournal } from './storage.js';
 import { JournalSync, signature } from './sync.js';
 import { createCloud } from './cloud.js';
@@ -29,7 +29,7 @@ function toast(message, error = false) {
   clearTimeout(toastTimer);
   const box = $('#toast');
   box.className = `toast${error ? ' error' : ''}`;
-  box.innerHTML = `${error ? icon('spark') : '<img src="./assets/guide.svg" alt="루미">'}<span>${escape(message)}</span>`;
+  box.innerHTML = `${error ? icon('spark') : '<img src="./assets/guide.png" alt="루미">'}<span>${escape(message)}</span>`;
   box.hidden = false;
   toastTimer = setTimeout(() => { box.hidden = true; }, error ? 7000 : 5000);
 }
@@ -92,7 +92,7 @@ function render() {
 function renderCard(q) {
   const p = progress(q);
   const ready = canClaim(q);
-  const caption = q.status === 'draft' ? '이야기를 쓰고 있어요' : q.status === 'completed' ? '나에게 선물을 건넸어요' : ready ? '보상을 받을 수 있어요' : `${p.done} / ${p.total} 발걸음 완료`;
+  const caption = q.status === 'draft' ? '이야기를 쓰고 있어요' : q.status === 'completed' ? '나에게 선물을 건넸어요' : ready ? '보상을 받을 수 있어요' : q.tasks.length ? `${p.done} / ${p.total} 발걸음 완료` : '완료를 기다리는 퀘스트예요';
   return `<button class="quest-card${state.selectedId === q.id ? ' selected' : ''}" data-quest="${escape(q.id)}" aria-pressed="${state.selectedId === q.id}"><div class="card-meta">${icon(categoryIcons[q.category])}${escape(q.category)} 퀘스트${q.isExample ? '<span class="sample-badge">예시</span>' : ''}</div><h3>${escape(q.title || '이름을 기다리는 퀘스트')}</h3><div class="card-progress"><div class="progress-track"><span style="width:${p.percent}%"></span></div><span>${p.percent}%</span></div><div class="card-bottom${ready ? ' ready' : q.status === 'completed' ? ' complete' : ''}">${icon(q.status === 'draft' ? 'edit' : ready ? 'gift' : q.status === 'completed' ? 'check' : 'leaf')}${caption}</div></button>`;
 }
 
@@ -103,7 +103,7 @@ function renderEmptyList() {
 }
 
 function renderDetail(q) {
-  const p = progress(q), ready = canClaim(q);
+  const p = progress(q), ready = canClaim(q), solo = !q.tasks.length;
   const record = q.rewardRecord;
   if (record?.photo) detailPhotoUrl = URL.createObjectURL(record.photo.blob);
   let chainIndex = 0;
@@ -114,8 +114,13 @@ function renderDetail(q) {
     const inputId = `task-${q.id}-${task.id}`;
     return `<label class="task-item${task.done ? ' done' : ''}${!unlocked ? ' locked' : ''}" for="${escape(inputId)}"><input id="${escape(inputId)}" type="checkbox" data-task="${escape(task.id)}" data-parent="${escape(q.id)}" ${task.done ? 'checked' : ''} ${disabled ? 'disabled' : ''} ${!unlocked ? 'title="앞선 연계 퀘스트를 먼저 완료해주세요"' : ''}><span class="task-text"><span class="task-kind">${icon(chain ? 'chain' : 'leaf')}${chain ? `연계 퀘스트 ${String(chainIndex).padStart(2, '0')}${!unlocked ? ' · 앞선 연계 퀘스트 완료 후 진행' : ''}` : '하위 퀘스트 · 자유롭게'}</span>${escape(task.title || '아직 작성하지 않은 발걸음')}</span>${!unlocked ? icon('lock').replace('class="icon"', 'class="icon task-status-icon"') : task.done ? icon('check').replace('class="icon"', 'class="icon task-status-icon"') : ''}</label>`;
   }).join('');
+  const goalInputId = `goal-${q.id}`;
+  const checklist = solo ? `<label class="task-item${q.goalDone ? ' done' : ''}" for="${escape(goalInputId)}"><input id="${escape(goalInputId)}" type="checkbox" data-goal="${escape(q.id)}" ${q.goalDone ? 'checked' : ''} ${q.status !== 'active' ? 'disabled' : ''}><span class="task-text"><span class="task-kind">${icon('check')}퀘스트 완료</span>${escape(q.title || '이름을 기다리는 퀘스트')}</span>${q.goalDone ? icon('check').replace('class="icon"', 'class="icon task-status-icon"') : ''}</label>` : tasks;
+  const progressCaption = solo ? (q.goalDone ? '퀘스트를 해냈어요' : q.status === 'draft' ? '시작을 기다리고 있어요' : '할 일을 마친 뒤 완료를 체크해주세요') : `${p.done} / ${p.total} 발걸음 완료`;
+  const checklistHint = q.status === 'draft' ? '시작한 뒤 체크할 수 있어요' : q.status === 'completed' ? '퀘스트를 마쳤어요' : solo ? '해냈다면 체크해주세요' : '한 가지씩, 나의 속도로';
+  const rewardHint = ready ? `${solo ? '퀘스트를 해냈어요.' : '모든 발걸음을 마쳤어요.'} 이제 보상을 받고 기록해주세요.` : solo ? '퀘스트 완료를 체크하면 보상을 받을 수 있어요.' : '모든 발걸음을 마치면 보상을 받을 수 있어요.';
   const created = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(record?.claimedAt || q.createdAt));
-  return `<button class="back-to-list" data-action="back">${icon('arrow')}퀘스트 목록으로</button><div class="detail-topline"><span class="detail-category">${icon(categoryIcons[q.category])}${escape(q.category)} 퀘스트 <span>· ${q.status === 'draft' ? '작성 중' : q.status === 'completed' ? '모험 완료' : ready ? '보상 대기' : '모험 중'}</span></span><div class="detail-actions">${q.status !== 'completed' ? `<button class="icon-button" data-action="edit" aria-label="퀘스트 편집" title="퀘스트 편집">${icon('edit')}</button>` : ''}<button class="icon-button" data-action="delete" aria-label="퀘스트 삭제" title="퀘스트 삭제">${icon('trash')}</button></div></div><h2 class="detail-title" id="detail-title" tabindex="-1">${escape(q.title || '이름을 기다리는 퀘스트')}</h2><p class="detail-description">${escape(q.description || (q.status === 'draft' ? '아직 쓰고 있는 이야기예요. 편집을 이어서 하고 모험을 시작해보세요.' : '아주 작은 발걸음도 소중한 모험이에요.'))}</p><div class="detail-progress"><div class="detail-progress-label"><span>나의 모험 진행도</span><strong>${p.percent}<span style="font-size:10px"> %</span></strong></div><div class="progress-track" role="progressbar" aria-label="퀘스트 진행도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p.percent}"><span style="width:${p.percent}%"></span></div><p class="detail-progress-caption">${p.done} / ${p.total} 발걸음 완료</p></div><h3 class="section-label">${icon('book')}작은 발걸음<span>${q.status === 'draft' ? '작성을 마치면 체크할 수 있어요' : q.status === 'completed' ? '모든 발걸음을 마쳤어요' : '한 가지씩, 나의 속도로'}</span></h3><div class="task-list">${tasks || '<p class="field-hint">이어서 작성하며 첫 발걸음을 추가해주세요.</p>'}</div><div class="reward-box"><div class="reward-label">${icon('gift')}${record ? '내가 나에게 건넨 선물' : '이 모험 끝에 기다리는 선물'}</div><h3 class="reward-name">${escape(q.reward || '어떤 선물을 받고 싶나요?')}</h3><p class="reward-hint">${record ? `${created} · 보상을 받은 순간을 기록했어요` : ready ? '모든 발걸음을 마쳤어요. 이제 보상을 받고 기록해주세요.' : '모든 발걸음을 마치면 보상을 받을 수 있어요.'}</p>${record?.note ? `<p class="reward-note">${escape(record.note)}</p>` : ''}${detailPhotoUrl ? `<img class="reward-photo" src="${detailPhotoUrl}" alt="내가 받은 보상 사진">` : ''}</div><div class="detail-footer"><span class="detail-date">${record ? '모험을 마친 날' : '모험을 적은 날'} ${created}</span>${q.status === 'draft' ? `<button class="button button-green" data-action="edit">${icon('edit')}이어서 작성하기</button>` : q.status === 'completed' ? '<span class="field-hint">✧ 잘해냈어요, 나의 모험가님.</span>' : `<button class="button ${ready ? 'button-gold' : 'button-outline'}" data-action="claim" ${ready ? '' : 'disabled'}>${icon(ready ? 'gift' : 'lock')}${ready ? '나에게 보상 주기' : '모험을 마치면 보상 받기'}</button>`}</div>${q.isExample ? `<p class="example-notice">${icon('spark')}사용법을 익히기 위한 예시예요. 설정에서 정리할 수 있어요.</p>` : ''}`;
+  return `<button class="back-to-list" data-action="back">${icon('arrow')}퀘스트 목록으로</button><div class="detail-topline"><span class="detail-category">${icon(categoryIcons[q.category])}${escape(q.category)} 퀘스트 <span>· ${q.status === 'draft' ? '작성 중' : q.status === 'completed' ? '모험 완료' : ready ? '보상 대기' : '모험 중'}</span></span><div class="detail-actions">${q.status !== 'completed' ? `<button class="icon-button" data-action="edit" aria-label="퀘스트 편집" title="퀘스트 편집">${icon('edit')}</button>` : ''}<button class="icon-button" data-action="delete" aria-label="퀘스트 삭제" title="퀘스트 삭제">${icon('trash')}</button></div></div><h2 class="detail-title" id="detail-title" tabindex="-1">${escape(q.title || '이름을 기다리는 퀘스트')}</h2><p class="detail-description">${escape(q.description || (q.status === 'draft' ? '아직 쓰고 있는 이야기예요. 편집을 이어서 하고 모험을 시작해보세요.' : '아주 작은 발걸음도 소중한 모험이에요.'))}</p><div class="detail-progress"><div class="detail-progress-label"><span>나의 모험 진행도</span><strong>${p.percent}<span style="font-size:10px"> %</span></strong></div><div class="progress-track" role="progressbar" aria-label="퀘스트 진행도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p.percent}"><span style="width:${p.percent}%"></span></div><p class="detail-progress-caption">${progressCaption}</p></div><h3 class="section-label">${icon('book')}${solo ? '퀘스트 완료 체크' : '작은 발걸음'}<span>${checklistHint}</span></h3><div class="task-list">${checklist}</div><div class="reward-box"><div class="reward-label">${icon('gift')}${record ? '내가 나에게 건넨 선물' : '이 모험 끝에 기다리는 선물'}</div><h3 class="reward-name">${escape(q.reward || '어떤 선물을 받고 싶나요?')}</h3><p class="reward-hint">${record ? `${created} · 보상을 받은 순간을 기록했어요` : rewardHint}</p>${record?.note ? `<p class="reward-note">${escape(record.note)}</p>` : ''}${detailPhotoUrl ? `<img class="reward-photo" src="${detailPhotoUrl}" alt="내가 받은 보상 사진">` : ''}</div><div class="detail-footer"><span class="detail-date">${record ? '모험을 마친 날' : '모험을 적은 날'} ${created}</span>${q.status === 'draft' ? `<button class="button button-green" data-action="edit">${icon('edit')}이어서 작성하기</button>` : q.status === 'completed' ? '<span class="field-hint">✧ 잘해냈어요, 나의 모험가님.</span>' : `<button class="button ${ready ? 'button-gold' : 'button-outline'}" data-action="claim" ${ready ? '' : 'disabled'}>${icon(ready ? 'gift' : 'lock')}${ready ? '나에게 보상 주기' : '모험을 마치면 보상 받기'}</button>`}</div>${q.isExample ? `<p class="example-notice">${icon('spark')}사용법을 익히기 위한 예시예요. 설정에서 정리할 수 있어요.</p>` : ''}`;
 }
 
 function switchTab(tab) {
@@ -144,7 +149,7 @@ function readDraft() {
   if (!original) throw new Error('작성 중인 퀘스트를 찾을 수 없어요.');
   return { ...original, title: $('#edit-title').value, description: $('#edit-description').value,
     category: $('#edit-category').value, reward: $('#edit-reward').value,
-    tasks: structuredClone(editorTasks), status: 'draft', isExample: false,
+    tasks: structuredClone(editorTasks), goalDone: !editorTasks.length && original.goalDone === true, status: 'draft', isExample: false,
     updatedAt: new Date().toISOString(), rewardRecord: null };
 }
 
@@ -176,7 +181,7 @@ async function openEditor(id) {
   await writeQueue;
   let quest = state.quests.find(q => q.id === id);
   if (quest?.status === 'completed') { finishEditing(); return; }
-  if (!quest) quest = makeQuest({ tasks: [{ id: uid(), title: '', kind: 'free', done: false }] });
+  if (!quest) quest = makeQuest();
   quest = { ...quest, status: 'draft', rewardRecord: null };
   await updateQuests(quests => replaceQuest(quests, quest), false);
   state.editorId = quest.id; state.selectedId = quest.id; state.tab = 'draft'; state.query = '';
@@ -254,9 +259,9 @@ async function compressPhoto(file) {
 
 const helpMessages = {
   welcome: '안녕하세요, 모험가님! 저는 작은 모험의 길잡이 루미예요.\n무엇이든 편하게 물어보세요. 오늘도 당신의 속도로 나아가면 충분해요.',
-  start: '‘새 퀘스트 만들기’를 누르고, 이름과 작은 발걸음, 나를 위한 보상을 적어주세요.\n‘퀘스트 시작하기’를 누르면 모험이 시작돼요! 다 쓰지 못해도 작성 중 탭에 자동으로 보관해드려요.',
+  start: '‘새 퀘스트 만들기’를 누르고, 이름과 나를 위한 보상을 적어주세요. 작은 발걸음은 필요할 때만 추가하면 돼요.\n‘퀘스트 시작하기’를 누르면 모험이 시작돼요! 다 쓰지 못해도 작성 중 탭에 자동으로 보관해드려요.',
   chain: '하위 퀘스트는 순서 없이 자유롭게 체크해요.\n연계 퀘스트는 앞선 연계 퀘스트를 마쳐야 다음 것을 체크할 수 있어요. 앞 단계를 해제하면 뒤의 연계 단계도 함께 해제돼요. 하위 퀘스트에는 영향을 주지 않아요.',
-  reward: '모든 발걸음을 마치면 ‘나에게 보상 주기’가 열려요.\n보상을 받은 순간을 글이나 사진으로 남기면 완료됨 탭과 보상 보관함에 소중히 보관돼요. 100%를 달성해도 보상을 기록하기 전까지는 진행 중이에요.',
+  reward: '퀘스트를 완료하면 ‘나에게 보상 주기’가 열려요. 발걸음이 없으면 퀘스트 완료를 한 번 체크해주세요.\n보상을 받은 순간을 글이나 사진으로 남기면 완료됨 탭과 보상 보관함에 소중히 보관돼요. 100%를 달성해도 보상을 기록하기 전까지는 진행 중이에요.',
   save: '로그인 전에는 지금 쓰는 브라우저에 기록을 보관해요. 이메일 계정으로 로그인하면 같은 계정의 퀘스트와 사진을 다른 기기에서도 이어서 볼 수 있어요.\n오프라인에서 수정한 내용은 이 기기에 보관했다가 연결되면 동기화해요. 동기화 전에는 브라우저 데이터를 지우지 말아주세요.',
   install: '설치 없이 이 링크에서 바로 쓸 수 있어요. 브라우저 메뉴의 ‘앱 설치’나 ‘홈 화면에 추가’로 앱처럼 사용할 수도 있고요.\n인터넷이 연결된 상태에서 한 번 열어둔 뒤에는 오프라인에서도 쓸 수 있어요. 처음 준비에는 잠시 시간이 필요해요.'
 };
@@ -405,21 +410,21 @@ $('.tabs').addEventListener('keydown', event => {
 
 $('#quest-detail').addEventListener('change', async event => {
   const input = event.target;
-  if (!input.dataset.task) return;
+  if (!input.dataset.task && !input.dataset.goal) return;
   input.disabled = true;
   const focusId = input.id;
   try {
     let finished = false, reset = false;
     await updateQuests(quests => {
-      const index = quests.findIndex(q => q.id === input.dataset.parent);
+      const index = quests.findIndex(q => q.id === (input.dataset.goal || input.dataset.parent));
       if (index < 0) throw new Error('퀘스트를 찾지 못했어요.');
       const before = progress(quests[index]);
-      quests[index] = toggleTask(quests[index], input.dataset.task);
+      quests[index] = input.dataset.goal ? toggleGoal(quests[index]) : toggleTask(quests[index], input.dataset.task);
       const after = progress(quests[index]);
       finished = canClaim(quests[index]); reset = before.done - after.done > 1;
     });
     document.getElementById(focusId)?.focus({ preventScroll: true });
-    if (finished) toast('모든 발걸음을 마쳤네요! 이제 나에게 약속한 선물을 건네주세요.');
+    if (finished) toast('퀘스트를 해냈네요! 이제 나에게 약속한 선물을 건네주세요.');
     else if (reset) toast('앞선 발걸음을 해제해서 뒤의 연계 퀘스트도 함께 해제했어요.');
   } catch (error) { render(); toast(error.message, true); }
 });
@@ -518,11 +523,6 @@ async function init() {
       if (cloud) await receiveSession(await cloud.session());
       renderCloudStatus();
     } catch (error) { cloudMessage = error.message; cloudPhase = 'error'; renderCloudStatus(); }
-  }
-  if ('serviceWorker' in navigator && window.isSecureContext) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {
-      $('#install-description').textContent = '오프라인 준비가 끝나지 않았어요. 인터넷 연결을 확인한 뒤 페이지를 다시 열어주세요. 현재 연결에서는 계속 사용할 수 있어요.';
-    });
   }
 }
 

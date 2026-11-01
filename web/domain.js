@@ -5,13 +5,13 @@ export const uid = () => crypto.randomUUID();
 export function makeQuest(overrides = {}) {
   const now = new Date().toISOString();
   return { id: uid(), title: '', description: '', category: '일상', status: 'draft',
-    tasks: [], reward: '', rewardRecord: null, createdAt: now, updatedAt: now,
+    tasks: [], goalDone: false, reward: '', rewardRecord: null, createdAt: now, updatedAt: now,
     isExample: false, ...overrides };
 }
 
 export function progress(quest) {
-  const total = quest.tasks.length;
-  const done = quest.tasks.filter(task => task.done).length;
+  const total = quest.tasks.length || 1;
+  const done = quest.tasks.length ? quest.tasks.filter(task => task.done).length : Number(quest.goalDone === true);
   return { total, done, percent: total ? Math.round(done / total * 100) : 0 };
 }
 
@@ -41,20 +41,27 @@ export function toggleTask(quest, taskId) {
   return { ...quest, tasks: normalizeTasks(tasks), updatedAt: new Date().toISOString() };
 }
 
+export function toggleGoal(quest) {
+  if (quest.status !== 'active') throw new Error('진행 중인 퀘스트만 체크할 수 있어요.');
+  if (quest.tasks.length) throw new Error('각 발걸음의 완료 여부를 체크해주세요.');
+  return { ...quest, goalDone: !quest.goalDone, updatedAt: new Date().toISOString() };
+}
+
 export function startQuest(quest) {
   if (!quest.title.trim()) throw new Error('퀘스트 이름을 적어주세요.');
-  if (!quest.tasks.length) throw new Error('작은 발걸음을 한 가지 이상 추가해주세요.');
-  if (quest.tasks.some(task => !task.title.trim())) throw new Error('비어 있는 발걸음의 내용을 적어주세요.');
   if (!quest.reward.trim()) throw new Error('나에게 줄 보상을 적어주세요.');
+  const tasks = normalizeTasks(quest.tasks.filter(task => task.title.trim())
+    .map(task => ({ ...task, title: task.title.trim() })));
   return { ...quest, title: quest.title.trim(), reward: quest.reward.trim(),
-    tasks: normalizeTasks(quest.tasks.map(task => ({ ...task, title: task.title.trim() }))),
+    tasks, goalDone: !tasks.length && quest.goalDone === true,
     status: 'active', updatedAt: new Date().toISOString(), rewardRecord: null };
 }
 
-export const canClaim = quest => quest.status === 'active' && quest.tasks.length > 0 && quest.tasks.every(task => task.done);
+export const canClaim = quest => quest.status === 'active' &&
+  (quest.tasks.length ? quest.tasks.every(task => task.done) : quest.goalDone === true);
 
 export function claimReward(quest, note, photo = null) {
-  if (!canClaim(quest)) throw new Error('모든 발걸음을 마친 뒤 보상을 기록할 수 있어요.');
+  if (!canClaim(quest)) throw new Error('퀘스트를 완료한 뒤 보상을 기록할 수 있어요.');
   if (!note.trim() && !photo) throw new Error('글이나 사진으로 보상을 받은 순간을 남겨주세요.');
   const now = new Date().toISOString();
   return { ...quest, status: 'completed', updatedAt: now,
@@ -87,18 +94,23 @@ export function validateQuests(input) {
       taskIds.add(taskId);
       return { id: taskId, title: text(task.title, 160), kind: task.kind, done: task.done };
     });
+    if (raw.goalDone !== undefined && typeof raw.goalDone !== 'boolean') throw new Error('퀘스트의 완료 체크 형식을 확인해주세요.');
     const quest = { id, title: text(raw.title, 80), description: text(raw.description, 2000),
-      category: raw.category, status: raw.status, tasks, reward: text(raw.reward, 160),
+      category: raw.category, status: raw.status, tasks, goalDone: !tasks.length && raw.goalDone === true, reward: text(raw.reward, 160),
       createdAt: date(raw.createdAt), updatedAt: date(raw.updatedAt), isExample: raw.isExample === true,
       rewardRecord: null };
     if (JSON.stringify(normalizeTasks(tasks)) !== JSON.stringify(tasks)) throw new Error('연계 퀘스트의 진행 순서가 올바르지 않아요.');
-    if (quest.status !== 'draft') startQuest(quest);
+    if (quest.status !== 'draft') {
+      if (tasks.some(task => !task.title.trim())) throw new Error('백업에 비어 있는 발걸음이 있어요.');
+      startQuest(quest);
+    }
     if (raw.rewardRecord) {
       const record = raw.rewardRecord;
       if (record.photo && (!(record.photo.blob instanceof Blob) || !['image/jpeg', 'image/png', 'image/webp'].includes(record.photo.blob.type) || record.photo.blob.size > 10 * 1024 * 1024)) throw new Error('백업 사진을 읽을 수 없어요.');
       quest.rewardRecord = { note: text(record.note, 3000), photo: record.photo ? { blob: record.photo.blob, name: text(record.photo.name, 255) } : null, claimedAt: date(record.claimedAt) };
     }
-    if (quest.status === 'completed' && (!tasks.length || tasks.some(task => !task.done) || !quest.rewardRecord || (!quest.rewardRecord.note.trim() && !quest.rewardRecord.photo))) throw new Error('완료된 퀘스트의 보상 기록을 확인해주세요.');
+    const { done, total } = progress(quest);
+    if (quest.status === 'completed' && (done !== total || !quest.rewardRecord || (!quest.rewardRecord.note.trim() && !quest.rewardRecord.photo))) throw new Error('완료된 퀘스트의 보상 기록을 확인해주세요.');
     if (quest.status !== 'completed' && quest.rewardRecord) throw new Error('진행 상태와 보상 기록이 맞지 않아요.');
     return quest;
   });
