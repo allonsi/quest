@@ -1,5 +1,8 @@
 import { makeQuest, uid, progress, isUnlocked, normalizeTasks, toggleTask, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
-import { loadQuests, saveQuests } from './storage.js';
+import { loadQuests, saveQuests, loadAccountJournal, saveAccountJournal } from './storage.js';
+import { JournalSync, signature } from './sync.js';
+import { createCloud } from './cloud.js';
+import { cloudConfig } from './config.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -9,6 +12,18 @@ const categoryIcons = { '일상': 'leaf', '공부': 'book', '건강': 'spark', '
 let writeQueue = Promise.resolve();
 let draftTimer, toastTimer, editorTasks = [], rewardPhoto = null, photoJob = 0, photoPending = false;
 let detailPhotoUrl, previewPhotoUrl, installPrompt, confirmCallback;
+let cloud, accountUser = null, cloudPhase = 'local', cloudMessage = '', syncTimer;
+let editLock = false, accountSwitching = false, deferredSession, authQueue = Promise.resolve();
+let guestCount = 0;
+let authMode = 'signin';
+const journal = new JournalSync({
+  disk: { loadGuest: loadQuests, saveGuest: saveQuests, loadAccount: loadAccountJournal, saveAccount: saveAccountJournal },
+  onChange: quests => { state.quests = quests; if (state.ready) render(); },
+  onStatus: (phase, message = '') => { cloudPhase = phase; cloudMessage = message; renderCloudStatus(); },
+  onConflict: ({ copied }) => toast(copied
+    ? '다른 기기에서도 바뀐 기록을 확인했어요. 서버 기록을 유지하고, 내 수정본은 별도 퀘스트로 보관했어요.'
+    : '다른 기기에서 바뀐 최신 기록을 유지했어요. 내용을 확인한 뒤 다시 삭제해주세요.')
+});
 
 function toast(message, error = false) {
   clearTimeout(toastTimer);
@@ -24,15 +39,18 @@ function setSaveStatus(message) {
 }
 
 // Serialize writes so a slow photo save cannot overwrite a more recent checkbox edit.
-function updateQuests(mutator, shouldRender = true) {
+function updateQuests(mutator, shouldRender = true, scope = journal.scope) {
   const operation = writeQueue.then(async () => {
     setSaveStatus('일지를 저장하고 있어요');
-    const next = structuredClone(state.quests);
-    mutator(next);
-    await saveQuests(next);
-    state.quests = next;
-    setSaveStatus('이 기기에 저장돼요');
+    await journal.mutate(quests => {
+      if (journal.scope !== scope) throw new Error('계정이 바뀌었어요. 현재 일지를 확인한 뒤 다시 시도해주세요.');
+      mutator(quests);
+    });
+    state.quests = journal.quests;
+    if (accountUser) cloudPhase = 'pending';
+    renderCloudStatus();
     if (shouldRender) render();
+    scheduleSync();
   });
   writeQueue = operation.catch(() => { setSaveStatus('저장을 다시 시도해주세요'); });
   return operation;
@@ -153,9 +171,11 @@ function scheduleDraft() {
 }
 
 async function openEditor(id) {
+  editLock = true;
+  try { await journal.running; } catch { /* Local drafts remain available. */ }
   await writeQueue;
   let quest = state.quests.find(q => q.id === id);
-  if (quest?.status === 'completed') return;
+  if (quest?.status === 'completed') { finishEditing(); return; }
   if (!quest) quest = makeQuest({ tasks: [{ id: uid(), title: '', kind: 'free', done: false }] });
   quest = { ...quest, status: 'draft', rewardRecord: null };
   await updateQuests(quests => replaceQuest(quests, quest), false);
@@ -175,6 +195,7 @@ async function closeDialog(id) {
     state.editorId = null;
   }
   document.getElementById(id).close();
+  if (id === 'editor-dialog') finishEditing();
 }
 
 function showError(id, message) {
@@ -188,9 +209,12 @@ function askConfirm(title, message) {
   return new Promise(resolve => { confirmCallback = resolve; });
 }
 
-function openReward() {
+async function openReward() {
+  editLock = true;
+  try { await journal.running; } catch { /* Use the locally saved journal. */ }
+  await writeQueue;
   const quest = state.quests.find(q => q.id === state.selectedId);
-  if (!quest || !canClaim(quest)) return;
+  if (!quest || !canClaim(quest)) { finishEditing(); return; }
   state.rewardId = quest.id; rewardPhoto = null; photoPending = false; photoJob++;
   $('#reward-name').textContent = quest.reward;
   $('#reward-note').value = ''; $('#reward-photo').value = '';
@@ -233,7 +257,7 @@ const helpMessages = {
   start: '‘새 퀘스트 만들기’를 누르고, 이름과 작은 발걸음, 나를 위한 보상을 적어주세요.\n‘퀘스트 시작하기’를 누르면 모험이 시작돼요! 다 쓰지 못해도 작성 중 탭에 자동으로 보관해드려요.',
   chain: '하위 퀘스트는 순서 없이 자유롭게 체크해요.\n연계 퀘스트는 앞선 연계 퀘스트를 마쳐야 다음 것을 체크할 수 있어요. 앞 단계를 해제하면 뒤의 연계 단계도 함께 해제돼요. 하위 퀘스트에는 영향을 주지 않아요.',
   reward: '모든 발걸음을 마치면 ‘나에게 보상 주기’가 열려요.\n보상을 받은 순간을 글이나 사진으로 남기면 완료됨 탭과 보상 보관함에 소중히 보관돼요. 100%를 달성해도 보상을 기록하기 전까지는 진행 중이에요.',
-  save: '퀘스트와 사진은 지금 쓰는 브라우저의 저장 공간에 있어요. 인터넷이 끊겨도 저장할 수 있어요.\n다른 기기와 자동으로 동기화되지는 않아요. 브라우저 데이터를 지우기 전에는 ‘일지 설정’에서 백업 파일을 꼭 저장해주세요.',
+  save: '로그인 전에는 지금 쓰는 브라우저에 기록을 보관해요. 이메일 계정으로 로그인하면 같은 계정의 퀘스트와 사진을 다른 기기에서도 이어서 볼 수 있어요.\n오프라인에서 수정한 내용은 이 기기에 보관했다가 연결되면 동기화해요. 동기화 전에는 브라우저 데이터를 지우지 말아주세요.',
   install: '설치 없이 이 링크에서 바로 쓸 수 있어요. 브라우저 메뉴의 ‘앱 설치’나 ‘홈 화면에 추가’로 앱처럼 사용할 수도 있고요.\n인터넷이 연결된 상태에서 한 번 열어둔 뒤에는 오프라인에서도 쓸 수 있어요. 처음 준비에는 잠시 시간이 필요해요.'
 };
 
@@ -259,6 +283,7 @@ async function exportJournal() {
 }
 
 async function importJournal(file) {
+  const scope = journal.scope;
   if (file.size > 64 * 1024 * 1024) throw new Error('64MB보다 작은 백업 파일을 선택해주세요.');
   let data;
   try { data = JSON.parse(await file.text()); } catch { throw new Error('읽을 수 있는 JSON 백업 파일을 선택해주세요.'); }
@@ -273,10 +298,10 @@ async function importJournal(file) {
       quest.rewardRecord.photo = { name: photo.name, blob: new Blob([bytes], { type: match[1] }) };
     }
   }
-  const incoming = validateQuests(data.quests);
+  const incoming = validateQuests(data.quests).map(q => ({ ...q, updatedAt: new Date().toISOString() }));
   await updateQuests(quests => {
     for (const quest of incoming) replaceQuest(quests, quest);
-  });
+  }, true, scope);
   toast(`${incoming.length}개의 퀘스트를 일지에 불러왔어요.`);
 }
 
@@ -286,7 +311,9 @@ document.addEventListener('click', async event => {
   try {
     if (target.dataset.close) { await closeDialog(target.dataset.close); return; }
     if (target.dataset.topic) { $('#npc-message').textContent = helpMessages[target.dataset.topic]; return; }
+    if (target.dataset.authMode) { setAuthMode(target.dataset.authMode); return; }
     if (!state.ready) return;
+    if (accountSwitching) { toast('계정의 일지를 여는 중이에요. 잠시만 기다려주세요.'); return; }
     if (target.dataset.tab) { switchTab(target.dataset.tab); return; }
     if (target.dataset.nav) { switchTab(target.dataset.nav === 'rewards' ? 'completed' : 'active'); return; }
     if (target.dataset.quest) {
@@ -310,32 +337,55 @@ document.addEventListener('click', async event => {
       editorTasks = normalizeTasks(editorTasks); renderEditorTasks(); scheduleDraft(); return;
     }
     const action = target.dataset.action;
-    if (action === 'new') await openEditor();
-    if (action === 'edit') await openEditor(state.selectedId);
-    if (action === 'claim') openReward();
+    if (action === 'new' || action === 'edit') {
+      try { await openEditor(action === 'edit' ? state.selectedId : undefined); }
+      catch (error) { finishEditing(); throw error; }
+    }
+    if (action === 'claim') await openReward();
     if (action === 'back') $('#journal-body').classList.remove('show-detail');
     if (action === 'clear-search') { state.query = ''; $('#quest-search').value = ''; render(); $('#quest-search').focus(); }
     if (action === 'help') { $('#npc-message').textContent = helpMessages.welcome; $('#help-dialog').showModal(); }
     if (action === 'settings') {
+      renderCloudStatus();
       $('#install-button').hidden = !installPrompt;
       if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) $('#install-description').textContent = '지금 앱 모드로 사용하고 있어요. 인터넷 없이도 나만의 일지를 이어갈 수 있어요.';
       $('#settings-dialog').showModal();
     }
     if (action === 'export') await exportJournal();
+    if (action === 'cloud-login') {
+      await writeQueue;
+      if (!cloud) throw new Error('로그인 연결 설정을 확인해주세요.');
+      setAuthMode('signin');
+      $('#auth-password').value = '';
+      $('#auth-dialog').showModal();
+      $('#auth-email').focus();
+    }
+    if (action === 'cloud-logout') {
+      await writeQueue;
+      if (journal.pendingCount) toast('동기화 대기 기록은 이 기기에 보관해요. 같은 계정으로 다시 로그인하면 이어서 전송해요.');
+      await cloud.signOut();
+      await receiveSession(null);
+    }
+    if (action === 'cloud-sync') await runSync(true);
+    if (action === 'cloud-import') await importGuestQuests();
     if (action === 'install' && installPrompt) {
       await installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; $('#install-button').hidden = true;
     }
     if (action === 'delete') {
-      const id = state.selectedId, quest = state.quests.find(q => q.id === id);
+      const id = state.selectedId, quest = state.quests.find(q => q.id === id), scope = journal.scope;
       if (quest && await askConfirm('이 퀘스트를 삭제할까요?', `‘${quest.title || '이름 없는 퀘스트'}’의 진행 상황과 보상 기록이 함께 삭제돼요. 필요하다면 먼저 백업해주세요.`)) {
-        await updateQuests(quests => quests.splice(quests.findIndex(q => q.id === id), 1));
+        await updateQuests(quests => {
+          const index = quests.findIndex(q => q.id === id);
+          if (index >= 0) quests.splice(index, 1);
+        }, true, scope);
         toast('퀘스트를 정리했어요. 새로운 모험을 기다릴게요.');
       }
     }
     if (action === 'clear-examples') {
+      const scope = journal.scope;
       if (!state.quests.some(q => q.isExample)) { toast('정리할 예시 퀘스트가 없어요.'); return; }
       if (await askConfirm('예시 퀘스트를 정리할까요?', '‘예시’ 표시가 있는 퀘스트만 삭제해요. 직접 만들거나 편집한 퀘스트는 그대로 보관해요.')) {
-        await updateQuests(quests => { for (let index = quests.length - 1; index >= 0; index--) if (quests[index].isExample) quests.splice(index, 1); });
+        await updateQuests(quests => { for (let index = quests.length - 1; index >= 0; index--) if (quests[index].isExample) quests.splice(index, 1); }, true, scope);
         toast('예시를 정리했어요. 이제 나만의 이야기를 채워보세요.');
       }
     }
@@ -387,6 +437,7 @@ $('#quest-form').addEventListener('submit', async event => {
     await updateQuests(quests => replaceQuest(quests, quest), false);
     state.editorId = null; state.tab = 'active'; state.selectedId = quest.id;
     $('#editor-dialog').close(); render(); $('#journal-body').classList.add('show-detail');
+    finishEditing();
     toast('새로운 모험의 시작이네요. 나만의 속도로, 한 걸음씩 함께해요!');
   } catch (error) { showError('editor-error', error.message); }
   finally { submit.disabled = false; }
@@ -424,7 +475,7 @@ $('#reward-form').addEventListener('submit', async event => {
   finally { $('#claim-submit').disabled = false; }
 });
 
-$('#reward-dialog').addEventListener('close', () => { photoJob++; photoPending = false; rewardPhoto = null; state.rewardId = null; clearPhotoPreview(); });
+$('#reward-dialog').addEventListener('close', () => { photoJob++; photoPending = false; rewardPhoto = null; state.rewardId = null; clearPhotoPreview(); finishEditing(); });
 $('#confirm-accept').addEventListener('click', () => {
   const resolve = confirmCallback; confirmCallback = null; $('#confirm-dialog').close(); resolve?.(true);
 });
@@ -445,7 +496,8 @@ $('#import-file').addEventListener('change', async event => {
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; $('#install-button').hidden = false; });
 window.addEventListener('appinstalled', () => { installPrompt = null; $('#install-button').hidden = true; });
 function updateConnection() { $('#connection-status').textContent = navigator.onLine ? '이 브라우저에 소중히 저장해요' : '오프라인 · 일지를 이어가세요'; }
-window.addEventListener('online', updateConnection); window.addEventListener('offline', updateConnection);
+window.addEventListener('online', () => { updateConnection(); scheduleSync(0); });
+window.addEventListener('offline', () => { updateConnection(); renderCloudStatus(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && state.editorId) saveDraft().catch(() => {}); });
 window.addEventListener('beforeunload', event => {
   if (draftTimer && state.editorId && $('#autosave-status').textContent !== '작성 중인 일지를 저장했어요') { event.preventDefault(); event.returnValue = ''; }
@@ -453,13 +505,19 @@ window.addEventListener('beforeunload', event => {
 
 async function init() {
   try {
-    const saved = await loadQuests();
-    state.quests = saved === undefined ? exampleQuests() : validateQuests(saved);
-    if (saved === undefined) await saveQuests(state.quests);
+    state.quests = await journal.openGuest(exampleQuests);
+    guestCount = state.quests.filter(q => !q.isExample).length;
     state.ready = true; render(); updateConnection(); setSaveStatus('이 기기에 저장돼요');
   } catch (error) {
     $('#quest-list').innerHTML = `<div class="empty-state">${icon('book')}<h3>일지를 열지 못했어요</h3><p>${escape(error.message)}</p><button class="button button-outline" onclick="location.reload()">다시 열기</button></div>`;
     toast(error.message, true); setSaveStatus('저장 공간을 확인해주세요');
+  }
+  if (state.ready) {
+    try {
+      cloud = await createCloud(cloudConfig, receiveSession);
+      if (cloud) await receiveSession(await cloud.session());
+      renderCloudStatus();
+    } catch (error) { cloudMessage = error.message; cloudPhase = 'error'; renderCloudStatus(); }
   }
   if ('serviceWorker' in navigator && window.isSecureContext) {
     navigator.serviceWorker.register('./sw.js').catch(() => {
@@ -467,4 +525,132 @@ async function init() {
     });
   }
 }
+
+function renderCloudStatus() {
+  const status = $('#cloud-status');
+  if (!status) return;
+  $('#cloud-account').textContent = accountUser?.email || (accountUser ? '로그인된 계정' : '이 기기의 일지');
+  const messages = { local: '로그인하면 다른 기기에서도 같은 기록을 이어서 쓸 수 있어요.',
+    pending: `${journal.pendingCount}개 변경 사항을 동기화할 예정이에요.`, syncing: '계정의 일지를 동기화하고 있어요.',
+    synced: '계정에 동기화했어요. 다른 기기에서도 이어서 볼 수 있어요.',
+    error: cloudMessage || '연결을 확인해주세요. 현재 기기 기록은 유지돼요.' };
+  status.textContent = accountUser && !navigator.onLine ? '오프라인이에요. 수정한 기록은 이 기기에 보관해요.' : messages[cloudPhase];
+  $('#cloud-login').hidden = !!accountUser;
+  $('#cloud-login').disabled = !cloud;
+  $('#cloud-account-actions').hidden = !accountUser;
+  $('#cloud-sync').disabled = cloudPhase === 'syncing' || !navigator.onLine;
+  $('#cloud-import').hidden = !accountUser || !guestCount;
+  $('#cloud-import').textContent = `이 기기 기록 ${guestCount}개 가져오기`;
+  $('#backup-description').textContent = accountUser
+    ? '현재 계정의 기록과 사진을 백업할 수 있어요. 오프라인 수정은 이 기기에 보관하고, 연결되면 계정에 동기화해요.'
+    : '퀘스트와 보상 사진은 현재 브라우저에 저장돼요. 다른 기기로 옮기거나 안전하게 보관하려면 백업 파일을 저장해주세요.';
+  setSaveStatus(accountUser ? ({ synced: '계정에 동기화됨', syncing: '계정 동기화 중', pending: '기기 저장 · 동기화 대기', error: '기기 저장 · 연결 확인' }[cloudPhase] || '기기에 저장돼요') : '이 기기에 저장돼요');
+}
+
+function finishEditing() {
+  editLock = false;
+  if (deferredSession !== undefined) {
+    const session = deferredSession; deferredSession = undefined; receiveSession(session);
+  } else scheduleSync(0);
+}
+
+function receiveSession(session) {
+  if (editLock) { deferredSession = session; return Promise.resolve(); }
+  const task = authQueue.then(async () => {
+    if (!cloud || (accountUser?.id || null) === (session?.user.id || null)) return;
+    accountSwitching = true; clearTimeout(syncTimer);
+    try {
+      await writeQueue;
+      try { await journal.running; } catch { /* Pending writes remain in the old account cache. */ }
+      const nextUser = session?.user || null;
+      const quests = nextUser
+        ? await journal.openAccount(`${new URL(cloud.url).hostname}:${nextUser.id}`, cloud.forUser(nextUser))
+        : await journal.openGuest(exampleQuests);
+      accountUser = nextUser; state.quests = quests;
+      state.query = ''; $('#quest-search').value = ''; state.selectedId = null; state.tab = 'active';
+      $('#journal-body').classList.remove('show-detail');
+      cloudPhase = nextUser ? 'pending' : 'local'; cloudMessage = '';
+      render(); renderCloudStatus();
+    } finally { accountSwitching = false; }
+    scheduleSync(0);
+  });
+  authQueue = task.catch(error => { cloudPhase = 'error'; cloudMessage = error.message; renderCloudStatus(); });
+  return task;
+}
+
+function scheduleSync(delay = 800) {
+  clearTimeout(syncTimer);
+  if (!accountUser || editLock || accountSwitching) return;
+  syncTimer = setTimeout(() => runSync().catch(() => {}), delay);
+}
+
+async function runSync(showErrors = false) {
+  if (!accountUser || editLock || accountSwitching || !navigator.onLine) return;
+  await writeQueue;
+  try {
+    await journal.sync();
+    renderCloudStatus();
+    if (journal.pendingCount) scheduleSync(1200);
+  } catch (error) { if (showErrors) toast(error.message, true); }
+}
+
+async function importGuestQuests() {
+  if (!accountUser) return;
+  const scope = journal.scope;
+  const guest = validateQuests((await loadQuests()) || []).filter(q => !q.isExample);
+  await updateQuests(quests => {
+    for (const original of guest) {
+      const existing = quests.find(q => q.id === original.id);
+      if (existing && signature({ ...existing, updatedAt: '' }) === signature({ ...original, updatedAt: '' })) continue;
+      const quest = { ...original, isExample: false, updatedAt: new Date().toISOString() };
+      if (existing) { quest.id = uid(); quest.title = `${quest.title.slice(0, 65)} (가져온 기록)`; }
+      quests.unshift(quest);
+    }
+  }, true, scope);
+  toast('이 기기의 기록을 계정 일지에 추가했어요. 원래 기기 기록도 그대로 보관해요.');
+}
+
+setInterval(() => { if (!document.hidden) runSync().catch(() => {}); }, 30000);
+window.addEventListener('focus', () => scheduleSync(0));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleSync(0); });
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const signingUp = mode === 'signup';
+  document.querySelectorAll('[data-auth-mode]').forEach(button => {
+    const active = button.dataset.authMode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  $('#auth-submit').textContent = signingUp ? '계정 만들고 시작하기' : '로그인하고 일지 열기';
+  $('#auth-password').autocomplete = signingUp ? 'new-password' : 'current-password';
+  $('#auth-password').minLength = signingUp ? 8 : 1;
+  $('#auth-hint').textContent = signingUp
+    ? 'Quest Maker에서 사용할 계정을 만들어요. 비밀번호는 8자 이상으로 정해주세요.'
+    : '다른 기기에서도 같은 이메일과 비밀번호로 로그인해주세요.';
+  $('#auth-error').hidden = true;
+  $('#auth-notice').hidden = true;
+}
+
+$('#auth-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!$('#auth-form').reportValidity()) return;
+  const button = $('#auth-submit'); button.disabled = true;
+  $('#auth-error').hidden = true; $('#auth-notice').hidden = true;
+  const email = $('#auth-email').value.trim(), password = $('#auth-password').value;
+  try {
+    const result = authMode === 'signup' ? await cloud.signUp(email, password) : await cloud.signIn(email, password);
+    $('#auth-password').value = '';
+    if (!result.session) {
+      $('#auth-notice').textContent = '가입 요청을 받았어요. 이메일 확인이 켜져 있다면 확인 메일을 열어준 뒤 로그인해주세요.';
+      $('#auth-notice').hidden = false;
+      return;
+    }
+    await receiveSession(result.session);
+    $('#auth-dialog').close();
+    toast('계정의 일지를 열었어요. 기존 기기 기록은 설정에서 한 번 가져올 수 있어요.');
+  } catch (error) { showError('auth-error', error.message || '로그인하지 못했어요. 다시 시도해주세요.'); }
+  finally { button.disabled = false; }
+});
+$('#auth-dialog').addEventListener('close', () => { $('#auth-password').value = ''; });
 init();

@@ -84,8 +84,37 @@
 
   <dialog id="help-dialog" class="modal help-modal" aria-labelledby="help-title"><div class="modal-heading"><div><span class="eyebrow">YOUR QUEST COMPANION</span><h2 id="help-title">길잡이 루미</h2></div><button class="icon-button" data-close="help-dialog" aria-label="도움말 닫기"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="modal-body"><div class="npc-conversation"><img src="./assets/guide.svg" width="120" height="145" alt="길잡이 루미"><div class="npc-bubble" id="npc-message" aria-live="polite"></div></div><div class="help-topics"><button data-topic="start">퀘스트는 어떻게 만드나요?<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="chain">하위·연계 퀘스트가 궁금해요<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="reward">보상은 언제 받을 수 있나요?<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="save">내 일지는 어디에 저장되나요?<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="install">설치하거나 오프라인으로 쓰고 싶어요<svg class="icon"><use href="#i-arrow"/></svg></button></div></div></dialog>
 
-  <dialog id="settings-dialog" class="modal settings-modal" aria-labelledby="settings-title"><div class="modal-heading"><div><span class="eyebrow">KEEP YOUR ADVENTURE SAFE</span><h2 id="settings-title">일지 설정</h2></div><button class="icon-button" data-close="settings-dialog" aria-label="설정 닫기"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="modal-body"><div class="setting-section"><h3>내 일지 백업</h3><p>퀘스트와 보상 사진은 현재 브라우저에 저장돼요. 다른 기기로 옮기거나 안전하게 보관하려면 백업 파일을 저장해주세요.</p><div class="button-group"><button class="button button-green" data-action="export"><svg class="icon"><use href="#i-download"/></svg>백업 파일 저장</button><label class="button button-outline import-label">백업 불러오기<input type="file" id="import-file" accept="application/json,.json" class="sr-only"></label></div><p class="field-hint">불러오기는 기존 일지를 유지하고, 같은 ID의 퀘스트만 백업 내용으로 갱신해요.</p></div><div class="setting-section"><h3>앱처럼 사용하기</h3><p id="install-description">브라우저 메뉴에서 ‘앱 설치’ 또는 ‘홈 화면에 추가’를 선택해주세요. 처음 열어둔 뒤에는 인터넷 없이도 일지를 쓸 수 있어요.</p><button class="button button-outline" id="install-button" data-action="install" hidden>Quest Maker 설치</button></div><div class="setting-section"><h3>예시 퀘스트 정리</h3><p>처음 준비한 예시만 삭제해요. 직접 만든 퀘스트는 그대로 보관해요.</p><button class="text-button danger" data-action="clear-examples">예시 퀘스트 삭제하기</button></div></div></dialog>
+  <dialog id="settings-dialog" class="modal settings-modal" aria-labelledby="settings-title">
+    <div class="modal-heading"><div><span class="eyebrow">KEEP YOUR ADVENTURE SAFE</span><h2 id="settings-title">일지 설정</h2></div><button class="icon-button" data-close="settings-dialog" aria-label="설정 닫기"><svg class="icon"><use href="#i-close"/></svg></button></div>
+    <div class="modal-body">
+      <div class="setting-section cloud-panel">
+        <h3>어디서든 이어지는 나의 모험</h3>
+        <div class="cloud-account"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg><strong id="cloud-account">이 기기의 일지</strong></div>
+        <p id="cloud-status" role="status" aria-live="polite">로그인 연결을 준비하고 있어요.</p>
+        <button class="button button-green" id="cloud-login" data-action="cloud-login" disabled><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg>이메일로 로그인 · 가입</button>
+        <div id="cloud-account-actions" class="button-group" hidden><button class="button button-green" id="cloud-sync" data-action="cloud-sync">지금 동기화</button><button class="button button-outline" data-action="cloud-logout">로그아웃</button></div>
+        <button class="button button-outline cloud-import" id="cloud-import" data-action="cloud-import" hidden>이 기기 기록 가져오기</button>
+        <p class="field-hint">로그인 전 일지와 계정 일지는 따로 보관해요. 기기 기록은 가져오기를 눌렀을 때 계정으로 전송해요.</p>
+      </div>
+      <div class="setting-section"><h3>내 일지 백업</h3><p id="backup-description">퀘스트와 보상 사진은 현재 브라우저에 저장돼요. 다른 기기로 옮기거나 안전하게 보관하려면 백업 파일을 저장해주세요.</p><div class="button-group"><button class="button button-green" data-action="export"><svg class="icon"><use href="#i-download"/></svg>백업 파일 저장</button><label class="button button-outline import-label">백업 불러오기<input type="file" id="import-file" accept="application/json,.json" class="sr-only"></label></div><p class="field-hint">불러오기는 기존 일지를 유지하고, 같은 ID의 퀘스트만 백업 내용으로 갱신해요.</p></div>
+      <div class="setting-section"><h3>앱처럼 사용하기</h3><p id="install-description">브라우저 메뉴에서 ‘앱 설치’ 또는 ‘홈 화면에 추가’를 선택해주세요. 처음 열어둔 뒤에는 오프라인에서도 일지를 쓸 수 있어요.</p><button class="button button-outline" id="install-button" data-action="install" hidden>Quest Maker 설치</button></div>
+      <div class="setting-section"><h3>예시 퀘스트 정리</h3><p>처음 준비한 예시만 삭제해요. 직접 만든 퀘스트는 그대로 보관해요.</p><button class="text-button danger" data-action="clear-examples">예시 퀘스트 삭제하기</button></div>
+    </div>
+  </dialog>
 
+  <dialog id="auth-dialog" class="modal auth-modal" aria-labelledby="auth-title">
+    <div class="modal-heading"><div><span class="eyebrow">YOUR ADVENTURE, EVERYWHERE</span><h2 id="auth-title">나의 모험 이어가기</h2></div><button type="button" class="icon-button" data-close="auth-dialog" aria-label="로그인 창 닫기"><svg class="icon"><use href="#i-close"/></svg></button></div>
+    <form id="auth-form">
+      <div class="modal-body">
+        <div class="auth-modes" role="group" aria-label="로그인 또는 가입 선택"><button type="button" data-auth-mode="signin" class="active" aria-pressed="true">로그인</button><button type="button" data-auth-mode="signup" aria-pressed="false">처음 가입하기</button></div>
+        <p id="auth-hint" class="field-hint">다른 기기에서도 같은 이메일과 비밀번호로 로그인해주세요.</p>
+        <label class="field" for="auth-email">이메일<input id="auth-email" type="email" name="email" autocomplete="username" maxlength="254" required placeholder="you@example.com"></label>
+        <label class="field" for="auth-password">비밀번호<input id="auth-password" type="password" name="password" autocomplete="current-password" maxlength="128" required placeholder="비밀번호를 입력해주세요"></label>
+        <p id="auth-error" class="form-error" role="alert" hidden></p><p id="auth-notice" class="field-hint" role="status" hidden></p>
+      </div>
+      <div class="modal-footer"><span>나의 기록을, 나의 계정에.</span><button type="submit" id="auth-submit" class="button button-green">로그인하고 일지 열기</button></div>
+    </form>
+  </dialog>
   <dialog id="confirm-dialog" class="modal confirm-modal" aria-labelledby="confirm-title"><div class="modal-heading"><h2 id="confirm-title">퀘스트를 삭제할까요?</h2></div><div class="modal-body"><p id="confirm-message"></p></div><div class="modal-footer"><button class="button button-outline" data-close="confirm-dialog">취소</button><button class="button button-danger" id="confirm-accept">삭제하기</button></div></dialog>
   <script type="module" src="./app.js"></script>
 </body>

@@ -37,3 +37,29 @@ export async function saveQuests(quests) {
     transaction.onabort = () => reject(new Error('저장이 중단됐어요. 다시 시도해주세요.'));
   });
 }
+
+export async function loadAccountJournal(scope) {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction('journal').objectStore('journal').get(`account:${scope}`);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(new Error('이 계정의 기기 저장 기록을 읽지 못했어요.'));
+  });
+}
+
+// Check a local revision in the same transaction to detect another tab's writes.
+export async function saveAccountJournal(scope, value, expectedRevision) {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('journal', 'readwrite'), store = tx.objectStore('journal');
+    let conflict = false;
+    const request = store.get(`account:${scope}`);
+    request.onsuccess = () => {
+      if ((request.result?.revision || 0) !== expectedRevision) { conflict = true; tx.abort(); return; }
+      store.put(value, `account:${scope}`);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(new Error(conflict ? '다른 탭에서 일지가 변경됐어요. 이 탭을 새로고침해주세요.' : '기기 저장 공간에 기록하지 못했어요.'));
+    tx.onerror = () => reject(new Error('기기에 저장하지 못했어요. 저장 공간을 확인해주세요.'));
+  });
+}
