@@ -10,3 +10,26 @@ dialog{border:1px solid #d2d2be;padding:0;background:var(--white);color:var(--in
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 .cloud-account{display:flex;align-items:center;gap:9px;margin:13px 0 9px;padding:12px;background:#edf1e4;border:1px solid #dce2ce;border-radius:4px;color:#61754f}.cloud-account strong{font-size:12px;font-weight:500;overflow-wrap:anywhere;min-width:0}.cloud-account .icon{width:17px;height:17px}.cloud-panel .cloud-import{margin-top:12px;width:100%;border-style:dashed;white-space:normal}.cloud-panel #cloud-status{min-height:21px}
 .auth-modal{width:460px}.auth-modes{display:flex;border:1px solid #dce2ce;border-radius:4px;padding:4px;background:#f1f3e9;gap:4px;margin-bottom:12px}.auth-modes button{flex:1;padding:9px;font-size:12px;border-radius:3px;color:#8b957b}.auth-modes button.active{background:#fffef8;color:#4d6947;box-shadow:0 1px 5px #3341250a}.auth-modal #auth-hint{margin-bottom:20px}.auth-modal .field:last-of-type{margin-bottom:0}.auth-modal .modal-footer{align-items:center}.auth-modal input{font-size:16px}
+
+/* Quest importance, urgency and active-list sorting. */
+.quest-priorities{border:0;padding:0;min-width:0;margin:0 0 21px}
+.quest-priorities legend{padding:0;margin-bottom:8px;font-size:12px;color:#737e60}
+.quest-priorities legend .field-hint{margin-left:5px}
+.priority-options{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.priority-option{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:8px 13px;border:1px solid #dcdfce;border-radius:4px;background:#f6f7ee;font-size:12px;cursor:pointer}
+.priority-option input{width:16px;height:16px;margin:0;accent-color:var(--green);cursor:pointer}
+.priority-option .icon{width:16px;height:16px}
+.priority-option:focus-within{outline:2px solid var(--gold);outline-offset:3px}
+.priority-option-important,.quest-flag-important{color:#9a7b3f}
+.priority-option-urgent,.quest-flag-urgent{color:#ad6852}
+.quest-card-title{display:flex;align-items:flex-start;gap:7px}
+.quest-card-title-text{min-width:0;overflow-wrap:anywhere}
+.quest-flags{display:inline-flex;gap:3px;flex-shrink:0;padding-top:2px}
+.quest-flag{display:inline-flex;align-items:center}
+.quest-flag .icon{width:14px;height:14px;stroke-width:1.8}
+.quest-flag-important .icon{fill:#f2e7c5}
+.quest-flag-urgent .icon{fill:#f3dfd0}
+.quest-sort{display:flex;align-items:center;gap:8px;margin:0 22px 12px;font-size:10px;color:#8a947c}
+.quest-sort select{flex:1;min-width:0;max-width:100%;min-height:34px;padding:6px 8px;border:1px solid #dce1cf;border-radius:4px;background:#fffef9;color:#657454;font-size:11px;cursor:pointer}
+@media(max-width:950px){.quest-sort{margin-left:14px;margin-right:14px}}
+@media(max-width:720px){.quest-sort{margin-left:18px;margin-right:18px}.quest-sort select{min-height:40px;font-size:16px}.priority-option{min-height:44px}.quest-flag .icon{width:15px;height:15px}}

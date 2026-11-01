@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Blob } from 'node:buffer';
-import { makeQuest, progress, isUnlocked, toggleTask, toggleGoal, startQuest, canClaim, claimReward, normalizeTasks, validateQuests, exampleQuests } from '../web/domain.js';
+import { makeQuest, progress, sortQuests, isUnlocked, toggleTask, toggleGoal, startQuest, canClaim, claimReward, normalizeTasks, validateQuests, exampleQuests } from '../web/domain.js';
 
 // Also runs in JavaScript verification environments that omit the optional web globals.
 globalThis.Blob ??= Blob;
@@ -162,6 +162,58 @@ test('백업의 실행 가능한 이미지와 길이 초과 텍스트를 거부�
   q.rewardRecord.photo = { blob: new Blob(['<svg/>'], { type: 'image/svg+xml' }), name: 'bad.svg' };
   assert.throws(() => validateQuests([q]));
   assert.throws(() => validateQuests([{ ...quest([task('할 일')]), title: 'a'.repeat(81) }]));
+});
+
+test('중요·긴급은 각각 또는 동시에 표시하고 완료 후에도 유지한다', () => {
+  const plain = makeQuest();
+  assert.equal(plain.important, false); assert.equal(plain.urgent, false);
+  for (const important of [false, true]) for (const urgent of [false, true]) {
+    const started = startQuest(makeQuest({ title: '산책하기', reward: '따뜻한 차', important, urgent }));
+    const completed = claimReward(toggleGoal(started), '잘 쉬었다');
+    assert.equal(completed.important, important); assert.equal(completed.urgent, urgent);
+    const restored = validateQuests(JSON.parse(JSON.stringify([completed])))[0];
+    assert.equal(restored.important, important); assert.equal(restored.urgent, urgent);
+  }
+});
+test('이전 기록에는 중요·긴급을 미선택으로 채운다', () => {
+  const old = quest([task('할 일')]); delete old.important; delete old.urgent;
+  const restored = validateQuests([old])[0];
+  assert.equal(restored.important, false); assert.equal(restored.urgent, false);
+  assert.deepEqual(restored.tasks, old.tasks);
+});
+test('중요·긴급 표시의 잘못된 자료형은 거부한다', () => {
+  for (const flag of ['important', 'urgent']) for (const value of ['true', 1, null]) {
+    assert.throws(() => validateQuests([{ ...quest([]), [flag]: value }]));
+  }
+});
+test('최신순은 수정 날짜와 입력 배열 순서 대신 작성 날짜를 따르고 원본 배열을 유지한다', () => {
+  const older = makeQuest({ id: 'older', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-12-01T00:00:00Z' });
+  const newer = makeQuest({ id: 'newer', createdAt: '2026-02-01T00:00:00Z', updatedAt: '2026-02-01T00:00:00Z' });
+  const input = [older, newer];
+  assert.deepEqual(sortQuests(input).map(q => q.id), ['newer', 'older']);
+  assert.deepEqual(input.map(q => q.id), ['older', 'newer']);
+});
+test('오래된순은 작성 날짜가 빠른 퀘스트부터 나열한다', () => {
+  const input = [
+    makeQuest({ id: 'new', createdAt: '2026-03-01T00:00:00Z' }),
+    makeQuest({ id: 'old', createdAt: '2026-01-01T00:00:00Z' }),
+    makeQuest({ id: 'middle', createdAt: '2026-02-01T00:00:00Z' })
+  ];
+  assert.deepEqual(sortQuests(input, 'oldest').map(q => q.id), ['old', 'middle', 'new']);
+});
+test('진행도순은 단계 수가 다른 퀘스트와 단일 완료 체크를 함께 정렬한다', () => {
+  const third = makeQuest({ id: 'third', tasks: [task('a', 'free', true), task('b', 'free'), task('c', 'free')] });
+  const half = makeQuest({ id: 'half', tasks: [task('a', 'free', true), task('b', 'free')] });
+  const pending = makeQuest({ id: 'pending' });
+  const done = makeQuest({ id: 'done', goalDone: true });
+  assert.deepEqual(sortQuests([pending, third, done, half], 'progress').map(q => q.id), ['done', 'half', 'third', 'pending']);
+});
+test('진행도가 같으면 최신 작성순으로 정렬하고 작성 시각도 같으면 순서가 일정하다', () => {
+  const old = makeQuest({ id: 'old', createdAt: '2026-01-01T00:00:00Z' });
+  const a = makeQuest({ id: 'a', createdAt: '2026-02-01T00:00:00Z' });
+  const b = makeQuest({ id: 'b', createdAt: '2026-02-01T00:00:00Z' });
+  assert.deepEqual(sortQuests([old, b, a], 'progress').map(q => q.id), ['a', 'b', 'old']);
+  assert.deepEqual(sortQuests([a, old, b], 'progress').map(q => q.id), ['a', 'b', 'old']);
 });
 
 console.log(`${passed.length} quest behavior tests passed.`);

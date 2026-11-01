@@ -1,4 +1,4 @@
-import { makeQuest, uid, progress, isUnlocked, normalizeTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
+import { makeQuest, uid, progress, sortQuests, isUnlocked, normalizeTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
 import { loadQuests, saveQuests, loadAccountJournal, saveAccountJournal } from './storage.js';
 import { JournalSync, signature } from './sync.js';
 import { createCloud } from './cloud.js';
@@ -7,7 +7,7 @@ import { cloudConfig } from './config.js';
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
-const state = { quests: [], tab: 'active', selectedId: null, query: '', editorId: null, rewardId: null, ready: false };
+const state = { quests: [], tab: 'active', activeSort: 'newest', selectedId: null, query: '', editorId: null, rewardId: null, ready: false };
 const categoryIcons = { '일상': 'leaf', '공부': 'book', '건강': 'spark', '나를 위한 일': 'gift' };
 let writeQueue = Promise.resolve();
 let draftTimer, toastTimer, editorTasks = [], rewardPhoto = null, photoJob = 0, photoPending = false;
@@ -80,7 +80,10 @@ function render() {
   $('#reward-nav-count').textContent = counts.completed;
   $('#list-title').textContent = { draft: '아직 쓰고 있는 이야기', active: '진행 중인 퀘스트', completed: '해낸 모험과 받은 선물' }[state.tab];
   $('#quest-list-panel').setAttribute('aria-labelledby', `tab-${state.tab}`);
-  const filtered = state.quests.filter(q => q.status === state.tab && `${q.title} ${q.description} ${q.reward}`.toLocaleLowerCase().includes(state.query.toLocaleLowerCase()));
+  const matches = state.quests.filter(q => q.status === state.tab && `${q.title} ${q.description} ${q.reward}`.toLocaleLowerCase().includes(state.query.toLocaleLowerCase()));
+  const filtered = state.tab === 'active' ? sortQuests(matches, state.activeSort) : matches;
+  $('#quest-sort-control').hidden = state.tab !== 'active';
+  $('#quest-sort').value = state.activeSort;
   if (!filtered.some(q => q.id === state.selectedId)) state.selectedId = filtered[0]?.id || null;
   $('#list-count').textContent = `${filtered.length}개의 이야기`;
   $('#quest-list').innerHTML = filtered.length ? filtered.map(renderCard).join('') : renderEmptyList();
@@ -89,11 +92,18 @@ function render() {
   $('#quest-detail').innerHTML = selected ? renderDetail(selected) : `<div class="empty-state empty-detail">${icon('book')}<h3>다음 모험을 기다리는 페이지</h3><p>작은 일 하나부터 시작해볼까요?<br>나만의 퀘스트를 만들고 이야기를 채워보세요.</p><button class="button button-outline" data-action="new">${icon('plus')}새 퀘스트 만들기</button></div>`;
 }
 
+function renderQuestFlags(quest) {
+  const flags = [];
+  if (quest.important) flags.push(`<span class="quest-flag quest-flag-important" role="img" aria-label="중요" title="중요한 퀘스트">${icon('star')}</span>`);
+  if (quest.urgent) flags.push(`<span class="quest-flag quest-flag-urgent" role="img" aria-label="긴급" title="긴급한 퀘스트">${icon('bolt')}</span>`);
+  return flags.length ? `<span class="quest-flags">${flags.join('')}</span>` : '';
+}
+
 function renderCard(q) {
   const p = progress(q);
   const ready = canClaim(q);
   const caption = q.status === 'draft' ? '이야기를 쓰고 있어요' : q.status === 'completed' ? '나에게 선물을 건넸어요' : ready ? '보상을 받을 수 있어요' : q.tasks.length ? `${p.done} / ${p.total} 발걸음 완료` : '완료를 기다리는 퀘스트예요';
-  return `<button class="quest-card${state.selectedId === q.id ? ' selected' : ''}" data-quest="${escape(q.id)}" aria-pressed="${state.selectedId === q.id}"><div class="card-meta">${icon(categoryIcons[q.category])}${escape(q.category)} 퀘스트${q.isExample ? '<span class="sample-badge">예시</span>' : ''}</div><h3>${escape(q.title || '이름을 기다리는 퀘스트')}</h3><div class="card-progress"><div class="progress-track"><span style="width:${p.percent}%"></span></div><span>${p.percent}%</span></div><div class="card-bottom${ready ? ' ready' : q.status === 'completed' ? ' complete' : ''}">${icon(q.status === 'draft' ? 'edit' : ready ? 'gift' : q.status === 'completed' ? 'check' : 'leaf')}${caption}</div></button>`;
+  return `<button class="quest-card${state.selectedId === q.id ? ' selected' : ''}" data-quest="${escape(q.id)}" aria-pressed="${state.selectedId === q.id}"><div class="card-meta">${icon(categoryIcons[q.category])}${escape(q.category)} 퀘스트${q.isExample ? '<span class="sample-badge">예시</span>' : ''}</div><h3 class="quest-card-title">${renderQuestFlags(q)}<span class="quest-card-title-text">${escape(q.title || '이름을 기다리는 퀘스트')}</span></h3><div class="card-progress"><div class="progress-track"><span style="width:${p.percent}%"></span></div><span>${p.percent}%</span></div><div class="card-bottom${ready ? ' ready' : q.status === 'completed' ? ' complete' : ''}">${icon(q.status === 'draft' ? 'edit' : ready ? 'gift' : q.status === 'completed' ? 'check' : 'leaf')}${caption}</div></button>`;
 }
 
 function renderEmptyList() {
@@ -149,6 +159,7 @@ function readDraft() {
   if (!original) throw new Error('작성 중인 퀘스트를 찾을 수 없어요.');
   return { ...original, title: $('#edit-title').value, description: $('#edit-description').value,
     category: $('#edit-category').value, reward: $('#edit-reward').value,
+    important: $('#edit-important').checked, urgent: $('#edit-urgent').checked,
     tasks: structuredClone(editorTasks), goalDone: !editorTasks.length && original.goalDone === true, status: 'draft', isExample: false,
     updatedAt: new Date().toISOString(), rewardRecord: null };
 }
@@ -189,6 +200,7 @@ async function openEditor(id) {
   $('#editor-title').textContent = id ? '나의 퀘스트 다듬기' : '나만의 퀘스트 만들기';
   $('#edit-title').value = quest.title; $('#edit-description').value = quest.description;
   $('#edit-category').value = quest.category; $('#edit-reward').value = quest.reward;
+  $('#edit-important').checked = quest.important === true; $('#edit-urgent').checked = quest.urgent === true;
   editorTasks = structuredClone(quest.tasks); renderEditorTasks();
   $('#editor-error').hidden = true; $('#autosave-status').textContent = '작성 내용은 자동으로 저장돼요';
   render(); $('#editor-dialog').showModal(); $('#edit-title').focus();
@@ -399,6 +411,7 @@ document.addEventListener('click', async event => {
 });
 
 $('#quest-search').addEventListener('input', event => { state.query = event.target.value; render(); });
+$('#quest-sort').addEventListener('change', event => { state.activeSort = event.target.value; render(); });
 $('.tabs').addEventListener('keydown', event => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
   event.preventDefault();

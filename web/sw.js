@@ -1,4 +1,4 @@
-const CACHE = 'quest-maker-shell-v11';
+const CACHE = 'quest-maker-shell-v12';
 const SHELL = ['./', './index.html', './register-sw.js', './styles.css', './app.js', './domain.js', './storage.js',
   './manifest.webmanifest', './assets/icon.svg', './assets/guide.png', './assets/icon-192.png', './assets/icon-512.png',
   './config.js', './cloud.js', './sync.js', './vendor/supabase-2.118.0.js'];

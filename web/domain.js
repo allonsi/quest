@@ -5,7 +5,7 @@ export const uid = () => crypto.randomUUID();
 export function makeQuest(overrides = {}) {
   const now = new Date().toISOString();
   return { id: uid(), title: '', description: '', category: '일상', status: 'draft',
-    tasks: [], goalDone: false, reward: '', rewardRecord: null, createdAt: now, updatedAt: now,
+    important: false, urgent: false, tasks: [], goalDone: false, reward: '', rewardRecord: null, createdAt: now, updatedAt: now,
     isExample: false, ...overrides };
 }
 
@@ -13,6 +13,19 @@ export function progress(quest) {
   const total = quest.tasks.length || 1;
   const done = quest.tasks.length ? quest.tasks.filter(task => task.done).length : Number(quest.goalDone === true);
   return { total, done, percent: total ? Math.round(done / total * 100) : 0 };
+}
+
+export function sortQuests(quests, order = 'newest') {
+  return [...quests].sort((a, b) => {
+    const newest = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    const tie = a.id.localeCompare(b.id);
+    if (order === 'oldest') return -newest || tie;
+    if (order === 'progress') {
+      const left = progress(a), right = progress(b);
+      return (right.done * left.total - left.done * right.total) || newest || tie;
+    }
+    return newest || tie;
+  });
 }
 
 export function isUnlocked(quest, taskId) {
@@ -95,8 +108,12 @@ export function validateQuests(input) {
       return { id: taskId, title: text(task.title, 160), kind: task.kind, done: task.done };
     });
     if (raw.goalDone !== undefined && typeof raw.goalDone !== 'boolean') throw new Error('퀘스트의 완료 체크 형식을 확인해주세요.');
+    for (const flag of ['important', 'urgent']) {
+      if (raw[flag] !== undefined && typeof raw[flag] !== 'boolean') throw new Error('중요·긴급 표시의 형식을 확인해주세요.');
+    }
     const quest = { id, title: text(raw.title, 80), description: text(raw.description, 2000),
-      category: raw.category, status: raw.status, tasks, goalDone: !tasks.length && raw.goalDone === true, reward: text(raw.reward, 160),
+      category: raw.category, status: raw.status, important: raw.important === true, urgent: raw.urgent === true,
+      tasks, goalDone: !tasks.length && raw.goalDone === true, reward: text(raw.reward, 160),
       createdAt: date(raw.createdAt), updatedAt: date(raw.updatedAt), isExample: raw.isExample === true,
       rewardRecord: null };
     if (JSON.stringify(normalizeTasks(tasks)) !== JSON.stringify(tasks)) throw new Error('연계 퀘스트의 진행 순서가 올바르지 않아요.');

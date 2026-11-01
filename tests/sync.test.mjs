@@ -65,6 +65,24 @@ await test('새 퀘스트를 다른 기기에서 불러온다', async () => {
   await a.save([quest('기기 간 기록')]); await a.sync(); await b.sync();
   assert.equal(b.quests[0].title, '기기 간 기록'); assert.equal(a.pendingCount, 0);
 });
+await test('중요·긴급을 함께 동기화하고 하나를 해제해도 다른 표시를 유지한다', async () => {
+  const s = server(), local = disk(), a = await device(s.forUser('A'), local), b = await device(s.forUser('A'));
+  await a.save([makeQuest({ title: '중요하고 긴급한 일', important: true, urgent: true })]);
+  await a.sync(); await b.sync();
+  assert.equal(b.quests[0].important, true); assert.equal(b.quests[0].urgent, true);
+  await b.mutate(qs => { qs[0].important = false; });
+  await b.sync(); await a.sync();
+  assert.equal(a.quests[0].important, false); assert.equal(a.quests[0].urgent, true);
+  const reopened = await device(s.forUser('A'), local);
+  assert.equal(reopened.quests[0].important, false); assert.equal(reopened.quests[0].urgent, true);
+});
+await test('이전 서버 기록에 중요·긴급 정보가 없어도 불러올 수 있다', async () => {
+  const s = server(), a = await device(s.forUser('A')), b = await device(s.forUser('A'));
+  const old = quest('예전 기록'); delete old.important; delete old.urgent;
+  await a.save([old]); await a.sync(); await b.sync();
+  assert.equal(b.quests[0].title, '예전 기록');
+  assert.equal(b.quests[0].important, false); assert.equal(b.quests[0].urgent, false);
+});
 await test('단계 없는 퀘스트의 완료 체크와 보상 기록이 다른 기기에 보존된다', async () => {
   const s = server(), a = await device(s.forUser('A')), b = await device(s.forUser('A'));
   await a.save([startQuest(makeQuest({ title: '산책하기', reward: '따뜻한 차' }))]);
