@@ -5,6 +5,7 @@ import { TextEncoder } from 'node:util';
 import { makeQuest, uid, validateQuests, startQuest, toggleGoal, claimReward, canClaim } from '../web/domain.js';
 import { JournalSync } from '../web/sync.js';
 import { createAuthActions, validateCloudConfig, QuestRemote } from '../web/cloud.js';
+import { recordOccurrence, recurrenceCounts } from '../web/recurrence.js';
 
 globalThis.Blob ??= Blob;
 globalThis.crypto ??= webcrypto;
@@ -64,6 +65,21 @@ await test('새 퀘스트를 다른 기기에서 불러온다', async () => {
   const s = server(), a = await device(s.forUser('A')), b = await device(s.forUser('A'));
   await a.save([quest('기기 간 기록')]); await a.sync(); await b.sync();
   assert.equal(b.quests[0].title, '기기 간 기록'); assert.equal(a.pendingCount, 0);
+});
+await test('반복 요일과 성공·실패 수정·취소가 다른 기기와 재실행에 보존된다', async () => {
+  const s = server(), local = disk(), a = await device(s.forUser('A'), local), b = await device(s.forUser('A'));
+  const now = new Date(2026, 10, 2, 12);
+  const q = startQuest(makeQuest({ title: '반복 산책', reward: '차', createdAt: new Date(2026, 9, 25, 12).toISOString(), recurrence: { days: [1, 3], history: [] } }));
+  await a.save([recordOccurrence(q, '2026-11-02', 'success', now)]); await a.sync(); await b.sync();
+  assert.equal(b.quests[0].recurrence.days.join(','), '1,3');
+  assert.deepEqual(recurrenceCounts(b.quests[0]), { success: 1, failure: 0 });
+  await b.mutate(qs => { qs[0] = recordOccurrence(qs[0], '2026-11-02', 'failure', now); });
+  await b.sync(); await a.sync();
+  assert.deepEqual(recurrenceCounts(a.quests[0]), { success: 0, failure: 1 });
+  const reopened = await device(s.forUser('A'), local);
+  assert.equal(reopened.quests[0].status, 'recurring'); assert.deepEqual(recurrenceCounts(reopened.quests[0]), { success: 0, failure: 1 });
+  await a.mutate(qs => { qs[0] = recordOccurrence(qs[0], '2026-11-02', null, now); });
+  await a.sync(); await b.sync(); assert.equal(b.quests[0].recurrence.history.length, 0);
 });
 await test('중요·긴급을 함께 동기화하고 하나를 해제해도 다른 표시를 유지한다', async () => {
   const s = server(), local = disk(), a = await device(s.forUser('A'), local), b = await device(s.forUser('A'));

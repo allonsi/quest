@@ -1,5 +1,6 @@
 import { makeQuest, uid, progress, matchesPriority, isUnlocked, normalizeTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
 import { getQuestView } from './list-view.js';
+import { WEEKDAYS, localDateKey, calendarDate, recurrenceLabel, recurrenceCounts, occurrenceState, recordOccurrence } from './recurrence.js';
 import { loadQuests, saveQuests, loadAccountJournal, saveAccountJournal } from './storage.js';
 import { JournalSync, signature } from './sync.js';
 import { createCloud } from './cloud.js';
@@ -8,7 +9,7 @@ import { cloudConfig } from './config.js';
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
-const state = { quests: [], tab: 'active', activeSort: 'newest', priorityFilter: 'all', selectedId: null, query: '', editorId: null, rewardId: null, ready: false };
+const state = { quests: [], tab: 'active', activeSort: 'newest', priorityFilter: 'all', selectedId: null, query: '', editorId: null, rewardId: null, occurrenceDate: localDateKey(), ready: false };
 const categoryIcons = { '일상': 'leaf', '공부': 'book', '건강': 'spark', '나를 위한 일': 'gift' };
 let writeQueue = Promise.resolve();
 let draftTimer, toastTimer, editorTasks = [], rewardPhoto = null, photoJob = 0, photoPending = false;
@@ -63,7 +64,7 @@ function replaceQuest(quests, quest) {
 }
 
 function render() {
-  const counts = Object.fromEntries(['draft', 'active', 'completed'].map(status => [status, state.quests.filter(q => q.status === status).length]));
+  const counts = Object.fromEntries(['draft', 'active', 'completed', 'recurring'].map(status => [status, state.quests.filter(q => q.status === status).length]));
   const ready = state.quests.filter(canClaim).length;
   $('#stats-strip').innerHTML = [
     ['book', '진행 중인 모험', counts.active, '한 걸음씩, 꾸준히', ''],
@@ -77,9 +78,11 @@ function render() {
     button.tabIndex = selected ? 0 : -1;
     button.querySelector('span').textContent = counts[button.dataset.tab];
   });
-  document.querySelectorAll('[data-nav]').forEach(button => button.classList.toggle('active', (button.dataset.nav === 'rewards') === (state.tab === 'completed')));
+  const activeNav = state.tab === 'completed' ? 'rewards' : state.tab === 'recurring' ? 'recurring' : 'journal';
+  document.querySelectorAll('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === activeNav));
   $('#reward-nav-count').textContent = counts.completed;
-  $('#list-title').textContent = { draft: '아직 쓰고 있는 이야기', active: '진행 중인 퀘스트', completed: '해낸 모험과 받은 선물' }[state.tab];
+  $('#recurring-nav-count').textContent = counts.recurring;
+  $('#list-title').textContent = { draft: '아직 쓰고 있는 이야기', active: '진행 중인 퀘스트', completed: '해낸 모험과 받은 선물', recurring: '꾸준히 이어가는 모험' }[state.tab];
   $('#quest-list-panel').setAttribute('aria-labelledby', `tab-${state.tab}`);
   const view = getQuestView(state.quests, state);
   const filtered = view.quests;
@@ -105,6 +108,7 @@ function renderQuestFlags(quest) {
 }
 
 function renderCard(q) {
+  if (q.status === 'recurring') return renderRecurringCard(q);
   const p = progress(q);
   const ready = canClaim(q);
   const caption = q.status === 'draft' ? '이야기를 쓰고 있어요' : q.status === 'completed' ? '나에게 선물을 건넸어요' : ready ? '보상을 받을 수 있어요' : q.tasks.length ? `${p.done} / ${p.total} 발걸음 완료` : '완료를 기다리는 퀘스트예요';
@@ -114,11 +118,12 @@ function renderCard(q) {
 function renderEmptyList() {
   if (state.tab === 'active' && state.priorityFilter !== 'all') return `<div class="empty-state">${icon('search')}<h3>조건에 맞는 퀘스트가 없어요</h3><p>검색어나 중요·긴급 필터를 바꿔보세요.</p><button class="text-button" data-action="clear-filters">${state.query.trim() ? '필터·검색 초기화' : '전체 퀘스트 보기'}</button></div>`;
   if (state.query.trim()) return `<div class="empty-state">${icon('search')}<h3>아직 찾지 못했어요</h3><p>다른 단어로 퀘스트를 찾아보세요.</p><button class="text-button" data-action="clear-search">검색 지우기</button></div>`;
-  const copy = { draft: ['아직 빈 페이지예요', '새 퀘스트를 쓰다가 잠시 쉬어가도 괜찮아요.'], active: ['새 모험을 시작해볼까요?', '오늘 해보고 싶은 아주 작은 일부터 적어보세요.'], completed: ['선물을 기다리는 페이지', '퀘스트를 마치고 보상을 기록하면 여기에 모여요.'] }[state.tab];
+  const copy = { draft: ['아직 빈 페이지예요', '새 퀘스트를 쓰다가 잠시 쉬어가도 괜찮아요.'], active: ['새 모험을 시작해볼까요?', '오늘 해보고 싶은 아주 작은 일부터 적어보세요.'], completed: ['선물을 기다리는 페이지', '퀘스트를 마치고 보상을 기록하면 여기에 모여요.'], recurring: ['작은 습관을 모험으로', '새 퀘스트에서 반복퀘스트를 선택하고, 나만의 요일을 정해보세요.'] }[state.tab];
   return `<div class="empty-state">${icon(state.tab === 'completed' ? 'gift' : 'book')}<h3>${copy[0]}</h3><p>${copy[1]}</p><button class="button button-outline button-small" data-action="new">${icon('plus')}퀘스트 만들기</button></div>`;
 }
 
 function renderDetail(q) {
+  if (q.status === 'recurring') return renderRecurringDetail(q);
   const p = progress(q), ready = canClaim(q), solo = !q.tasks.length;
   const record = q.rewardRecord;
   if (record?.photo) detailPhotoUrl = URL.createObjectURL(record.photo.blob);
@@ -141,9 +146,49 @@ function renderDetail(q) {
 
 function switchTab(tab) {
   state.tab = tab; state.query = ''; state.selectedId = null;
+  state.occurrenceDate = localDateKey();
   $('#quest-search').value = '';
   $('#journal-body').classList.remove('show-detail');
   render();
+}
+
+function renderRecurringCard(q) {
+  const counts = recurrenceCounts(q), today = occurrenceState(q);
+  const caption = today.outcome === 'success' ? '오늘은 성공했어요' : today.outcome === 'failure' ? '오늘의 실패를 기록했어요' : today.scheduled ? '오늘의 기록을 기다려요' : '오늘은 쉬어가는 날이에요';
+  return `<button class="quest-card${state.selectedId === q.id ? ' selected' : ''}" data-quest="${escape(q.id)}" aria-pressed="${state.selectedId === q.id}"><div class="card-meta">${icon('repeat')}반복퀘스트 · ${escape(q.category)}</div><h3 class="quest-card-title">${renderQuestFlags(q)}<span class="quest-card-title-text">${escape(q.title)}</span></h3><p class="recurring-card-days">${recurrenceLabel(q.recurrence)}</p><div class="recurring-card-counts"><span>성공 <strong>${counts.success}</strong>회</span><span>실패 <strong>${counts.failure}</strong>회</span></div><div class="card-bottom${today.outcome === 'success' ? ' complete' : ''}">${icon(today.outcome === 'success' ? 'check' : 'repeat')}${caption}</div></button>`;
+}
+
+function renderRecurringDetail(q) {
+  const counts = recurrenceCounts(q), date = state.occurrenceDate;
+  const occurrence = occurrenceState(q, date), today = localDateKey();
+  const dateLabel = `${date.replaceAll('-', '. ')}. (${WEEKDAYS[calendarDate(date).getUTCDay()]})`;
+  const status = occurrence.outcome === 'success' ? '성공으로 기록했어요' : occurrence.outcome === 'failure' ? '실패로 기록했어요' : '아직 기록하지 않았어요';
+  const history = [...q.recurrence.history].reverse().slice(0, 7);
+  const hint = occurrence.available ? '다른 결과를 누르면 수정하고, 같은 결과를 다시 누르면 취소해요.' : '시작한 날부터 오늘까지, 반복하는 요일을 선택해주세요.';
+  return `<button class="back-to-list" data-action="back">${icon('arrow')}퀘스트 목록으로</button>
+    <div class="detail-topline"><span class="detail-category">${icon('repeat')}${escape(q.category)} 퀘스트 · 매주 이어가기</span><div class="detail-actions"><button class="icon-button" data-action="edit" aria-label="퀘스트 편집">${icon('edit')}</button><button class="icon-button" data-action="delete" aria-label="퀘스트 삭제">${icon('trash')}</button></div></div>
+    <h2 class="detail-title" id="detail-title" tabindex="-1">${escape(q.title)}</h2><p class="detail-description">${escape(q.description || '작은 반복이 모여, 나다운 하루를 만들어요.')}</p>
+    <div class="recurring-schedule">${icon('repeat')}<span>${recurrenceLabel(q.recurrence)}</span></div>
+    <dl class="recurring-totals"><div><dt>성공</dt><dd>${counts.success}<small>회</small></dd></div><div><dt>실패</dt><dd>${counts.failure}<small>회</small></dd></div></dl>
+    <section class="occurrence-panel" aria-labelledby="occurrence-heading"><h3 id="occurrence-heading">이번 모험의 기록</h3><label class="occurrence-date" for="occurrence-date">기록할 날짜<input id="occurrence-date" type="date" value="${date}" min="${localDateKey(new Date(q.createdAt))}" max="${today}"></label>
+      <p class="occurrence-status">${dateLabel} · ${status}</p>
+      <div class="occurrence-actions" role="group" aria-label="성공 또는 실패 기록"><button class="outcome-button outcome-success" data-outcome="success" aria-pressed="${occurrence.outcome === 'success'}" ${occurrence.available ? '' : 'disabled'}>${icon('check')}성공했어요</button><button class="outcome-button outcome-failure" data-outcome="failure" aria-pressed="${occurrence.outcome === 'failure'}" ${occurrence.available ? '' : 'disabled'}>${icon('close')}실패했어요</button></div>
+      <p class="field-hint">${hint}</p><p class="field-hint">하루에 한 번 기록해요. 기록하지 않은 날은 횟수에 포함하지 않아요.</p>
+    </section>
+    ${q.tasks.length ? `<h3 class="section-label recurring-steps">${icon('leaf')}매번 해볼 작은 발걸음</h3><ol class="recurring-task-list">${q.tasks.map(task => `<li>${escape(task.title)}</li>`).join('')}</ol>` : ''}
+    <div class="reward-box"><div class="reward-label">${icon('gift')}성공한 날, 나에게 약속한 선물</div><h3 class="reward-name">${escape(q.reward)}</h3></div>
+    <section class="recurring-history" aria-labelledby="history-heading"><h3 id="history-heading" class="section-label">${icon('book')}최근 기록 <span>최근 7회 · 날짜를 눌러 수정</span></h3>${history.length ? `<ul>${history.map(record => `<li><button data-record-date="${record.date}" aria-label="${record.date} 기록 수정"><time datetime="${record.date}">${record.date.replaceAll('-', '. ')}.</time><span class="history-${record.outcome}">${record.outcome === 'success' ? '성공' : '실패'}</span></button></li>`).join('')}</ul>` : '<p class="field-hint">첫 번째 기록을 기다리고 있어요.</p>'}</section>`;
+}
+
+function renderRepeatEditor() {
+  const repeating = $('#edit-recurring').checked;
+  $('#repeat-days').disabled = !repeating;
+  $('#repeat-options').classList.toggle('is-disabled', !repeating);
+  const days = [...document.querySelectorAll('[name="repeat-day"]:checked')].map(input => Number(input.value));
+  $('#repeat-summary').textContent = repeating ? recurrenceLabel({ days }) : '반복퀘스트를 선택하면 요일을 정할 수 있어요.';
+  $('#start-quest-label').textContent = repeating ? '반복퀘스트 시작하기' : '퀘스트 시작하기';
+  $('#edit-tasks-hint').textContent = repeating ? '매번 해볼 작은 할 일을 적어보세요. 성공·실패는 퀘스트 전체를 기준으로 기록해요.' : '할 일이 하나라면 추가하지 않아도 돼요. 비워 둔 항목은 시작할 때 제외해요. 하위 퀘스트는 자유롭게, 연계 퀘스트는 순서대로 체크해요.';
+  $('#edit-reward-hint').textContent = repeating ? '성공한 날 나에게 건넬 작은 선물을 적어주세요.' : '퀘스트를 마치면 받을 수 있는 나만의 선물이에요.';
 }
 
 function renderEditorTasks() {
@@ -166,6 +211,7 @@ function readDraft() {
   return { ...original, title: $('#edit-title').value, description: $('#edit-description').value,
     category: $('#edit-category').value, reward: $('#edit-reward').value,
     important: $('#edit-important').checked, urgent: $('#edit-urgent').checked,
+    recurrence: $('#edit-recurring').checked ? { days: [...document.querySelectorAll('[name="repeat-day"]:checked')].map(input => Number(input.value)), history: original.recurrence?.history || [] } : null,
     tasks: structuredClone(editorTasks), goalDone: !editorTasks.length && original.goalDone === true, status: 'draft', isExample: false,
     updatedAt: new Date().toISOString(), rewardRecord: null };
 }
@@ -198,7 +244,7 @@ async function openEditor(id) {
   await writeQueue;
   let quest = state.quests.find(q => q.id === id);
   if (quest?.status === 'completed') { finishEditing(); return; }
-  if (!quest) { quest = makeQuest(); state.priorityFilter = 'all'; }
+  if (!quest) { quest = makeQuest(state.tab === 'recurring' ? { recurrence: { days: [], history: [] } } : {}); state.priorityFilter = 'all'; }
   quest = { ...quest, status: 'draft', rewardRecord: null };
   await updateQuests(quests => replaceQuest(quests, quest), false);
   state.editorId = quest.id; state.selectedId = quest.id; state.tab = 'draft'; state.query = '';
@@ -207,6 +253,12 @@ async function openEditor(id) {
   $('#edit-title').value = quest.title; $('#edit-description').value = quest.description;
   $('#edit-category').value = quest.category; $('#edit-reward').value = quest.reward;
   $('#edit-important').checked = quest.important === true; $('#edit-urgent').checked = quest.urgent === true;
+  $('#edit-recurring').checked = !!quest.recurrence;
+  const hasRecords = !!quest.recurrence?.history.length;
+  $('#edit-recurring').disabled = hasRecords;
+  $('#repeat-type-hint').textContent = hasRecords ? '기록이 있는 퀘스트는 반복 설정을 유지해요. 요일은 바꿀 수 있어요.' : '매주 정해진 요일에 같은 모험을 이어가요.';
+  document.querySelectorAll('[name="repeat-day"]').forEach(input => { input.checked = quest.recurrence?.days.includes(Number(input.value)) === true; });
+  renderRepeatEditor();
   editorTasks = structuredClone(quest.tasks); renderEditorTasks();
   $('#editor-error').hidden = true; $('#autosave-status').textContent = '작성 내용은 자동으로 저장돼요';
   render(); $('#editor-dialog').showModal(); $('#edit-title').focus();
@@ -338,12 +390,27 @@ document.addEventListener('click', async event => {
     if (!state.ready) return;
     if (accountSwitching) { toast('계정의 일지를 여는 중이에요. 잠시만 기다려주세요.'); return; }
     if (target.dataset.tab) { switchTab(target.dataset.tab); return; }
-    if (target.dataset.nav) { switchTab(target.dataset.nav === 'rewards' ? 'completed' : 'active'); return; }
+    if (target.dataset.nav) { switchTab({ journal: 'active', rewards: 'completed', recurring: 'recurring' }[target.dataset.nav]); return; }
     if (target.dataset.quest) {
-      state.selectedId = target.dataset.quest; render();
+      state.selectedId = target.dataset.quest; state.occurrenceDate = localDateKey(); render();
       $('#journal-body').classList.add('show-detail');
       if (matchMedia('(max-width:720px)').matches) $('#detail-title')?.focus({ preventScroll: true });
       return;
+    }
+    if (target.dataset.outcome) {
+      const id = state.selectedId, date = state.occurrenceDate, outcome = target.dataset.outcome;
+      target.disabled = true;
+      await updateQuests(quests => {
+        const index = quests.findIndex(q => q.id === id);
+        if (index < 0) throw new Error('퀘스트를 찾지 못했어요.');
+        const previous = occurrenceState(quests[index], date).outcome;
+        quests[index] = recordOccurrence(quests[index], date, previous === outcome ? null : outcome);
+      });
+      $(`[data-outcome="${outcome}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    if (target.dataset.recordDate) {
+      state.occurrenceDate = target.dataset.recordDate; render(); $('#occurrence-date').focus({ preventScroll: true }); return;
     }
     if (target.dataset.addTask) {
       readEditorTasks();
@@ -417,7 +484,10 @@ document.addEventListener('click', async event => {
       }
     }
     if (action === 'remove-photo') { photoJob++; rewardPhoto = null; photoPending = false; $('#claim-submit').disabled = false; $('#reward-photo').value = ''; clearPhotoPreview(); }
-  } catch (error) { toast(error.message || '다시 한 번 시도해주세요.', true); }
+  } catch (error) {
+    if (target.dataset.outcome) render();
+    toast(error.message || '다시 한 번 시도해주세요.', true);
+  }
 });
 
 $('#quest-search').addEventListener('input', event => { state.query = event.target.value; render(); });
@@ -440,6 +510,10 @@ $('.tabs').addEventListener('keydown', event => {
 
 $('#quest-detail').addEventListener('change', async event => {
   const input = event.target;
+  if (input.id === 'occurrence-date') {
+    if (input.value && input.validity.valid) state.occurrenceDate = input.value;
+    render(); $('#occurrence-date')?.focus({ preventScroll: true }); return;
+  }
   if (!input.dataset.task && !input.dataset.goal) return;
   input.disabled = true;
   const focusId = input.id;
@@ -459,7 +533,10 @@ $('#quest-detail').addEventListener('change', async event => {
   } catch (error) { render(); toast(error.message, true); }
 });
 
-$('#quest-form').addEventListener('input', scheduleDraft);
+$('#quest-form').addEventListener('input', event => {
+  if (event.target.id === 'edit-recurring' || event.target.name === 'repeat-day') renderRepeatEditor();
+  scheduleDraft();
+});
 $('#edit-tasks').addEventListener('change', event => {
   if (event.target.tagName === 'SELECT') { readEditorTasks(); renderEditorTasks(); scheduleDraft(); }
 });
@@ -471,7 +548,7 @@ $('#quest-form').addEventListener('submit', async event => {
     const quest = startQuest(readDraft());
     await updateQuests(quests => replaceQuest(quests, quest), false);
     if (!matchesPriority(quest, state.priorityFilter)) state.priorityFilter = 'all';
-    state.editorId = null; state.tab = 'active'; state.selectedId = quest.id;
+    state.editorId = null; state.tab = quest.status; state.selectedId = quest.id; state.occurrenceDate = localDateKey();
     $('#editor-dialog').close(); render(); $('#journal-body').classList.add('show-detail');
     finishEditing();
     toast('새로운 모험의 시작이네요. 나만의 속도로, 한 걸음씩 함께해요!');
@@ -643,7 +720,16 @@ async function importGuestQuests() {
 
 setInterval(() => { if (!document.hidden) runSync().catch(() => {}); }, 30000);
 window.addEventListener('focus', () => scheduleSync(0));
-document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleSync(0); });
+let calendarDay = localDateKey();
+function refreshCalendarDay() {
+  const today = localDateKey();
+  if (today === calendarDay) return;
+  if (state.occurrenceDate === calendarDay) state.occurrenceDate = today;
+  calendarDay = today;
+  if (state.ready) render();
+}
+setInterval(() => { if (!document.hidden) refreshCalendarDay(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshCalendarDay(); scheduleSync(0); } });
 
 function setAuthMode(mode) {
   authMode = mode;

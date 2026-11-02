@@ -1,11 +1,13 @@
+import { validateRecurrence } from './recurrence.js';
+
 export const CATEGORIES = ['일상', '공부', '건강', '나를 위한 일'];
-export const STATUSES = ['draft', 'active', 'completed'];
+export const STATUSES = ['draft', 'active', 'completed', 'recurring'];
 export const uid = () => crypto.randomUUID();
 
 export function makeQuest(overrides = {}) {
   const now = new Date().toISOString();
   return { id: uid(), title: '', description: '', category: '일상', status: 'draft',
-    important: false, urgent: false, tasks: [], goalDone: false, reward: '', rewardRecord: null, createdAt: now, updatedAt: now,
+    important: false, urgent: false, tasks: [], goalDone: false, reward: '', rewardRecord: null, recurrence: null, createdAt: now, updatedAt: now,
     isExample: false, ...overrides };
 }
 
@@ -79,11 +81,13 @@ export function toggleGoal(quest) {
 export function startQuest(quest) {
   if (!quest.title.trim()) throw new Error('퀘스트 이름을 적어주세요.');
   if (!quest.reward.trim()) throw new Error('나에게 줄 보상을 적어주세요.');
+  const recurrence = validateRecurrence(quest.recurrence);
+  if (recurrence && !recurrence.days.length) throw new Error('반복할 요일을 하나 이상 선택해주세요.');
   const tasks = normalizeTasks(quest.tasks.filter(task => task.title.trim())
     .map(task => ({ ...task, title: task.title.trim() })));
   return { ...quest, title: quest.title.trim(), reward: quest.reward.trim(),
     tasks, goalDone: !tasks.length && quest.goalDone === true,
-    status: 'active', updatedAt: new Date().toISOString(), rewardRecord: null };
+    status: recurrence ? 'recurring' : 'active', recurrence, updatedAt: new Date().toISOString(), rewardRecord: null };
 }
 
 export const canClaim = quest => quest.status === 'active' &&
@@ -131,7 +135,9 @@ export function validateQuests(input) {
       category: raw.category, status: raw.status, important: raw.important === true, urgent: raw.urgent === true,
       tasks, goalDone: !tasks.length && raw.goalDone === true, reward: text(raw.reward, 160),
       createdAt: date(raw.createdAt), updatedAt: date(raw.updatedAt), isExample: raw.isExample === true,
-      rewardRecord: null };
+      rewardRecord: null, recurrence: validateRecurrence(raw.recurrence) };
+    if ((quest.status === 'recurring' && !quest.recurrence) ||
+      (quest.recurrence && !['draft', 'recurring'].includes(quest.status))) throw new Error('반복퀘스트의 상태를 확인해주세요.');
     if (JSON.stringify(normalizeTasks(tasks)) !== JSON.stringify(tasks)) throw new Error('연계 퀘스트의 진행 순서가 올바르지 않아요.');
     if (quest.status !== 'draft') {
       if (tasks.some(task => !task.title.trim())) throw new Error('백업에 비어 있는 발걸음이 있어요.');

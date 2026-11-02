@@ -22,6 +22,7 @@ dialog{border:1px solid #d2d2be;padding:0;background:var(--white);color:var(--in
 .priority-option:focus-within{outline:2px solid var(--gold);outline-offset:3px}
 .priority-option-important,.quest-flag-important{color:#9a7b3f}
 .priority-option-urgent,.quest-flag-urgent{color:#ad6852}
+.priority-option-recurring{color:#5d7552}
 .quest-card-title{display:flex;align-items:flex-start;gap:7px}
 .quest-card-title-text{min-width:0;overflow-wrap:anywhere}
 .quest-flags{display:inline-flex;gap:3px;flex-shrink:0;padding-top:2px}
@@ -34,3 +35,60 @@ dialog{border:1px solid #d2d2be;padding:0;background:var(--white);color:var(--in
 .quest-list-control select{flex:1;min-width:0;max-width:100%;min-height:34px;padding:6px 8px;border:1px solid #dce1cf;border-radius:4px;background:#fffef9;color:#657454;font-size:11px;cursor:pointer}
 @media(max-width:950px){.quest-list-control{margin-left:14px;margin-right:14px}}
 @media(max-width:720px){.quest-list-control{margin-left:18px;margin-right:18px}.quest-list-control select{min-height:40px;font-size:16px}.priority-option{min-height:44px}.quest-flag .icon{width:15px;height:15px}}
+
+/* Weekly quests use the same paper, sage and muted terracotta palette. */
+.repeat-settings{margin:0 0 24px;padding:17px 18px;border:1px solid #dde2d0;border-radius:6px;background:#f3f5ea}
+.repeat-days{margin:0 0 8px;padding:0;border:0;min-width:0}
+.repeat-days legend{font-size:11px;color:#737e60;margin-bottom:12px;padding:0}
+.repeat-days legend span{margin-left:8px;font-size:9px}
+.weekday-options{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+.weekday-option{position:relative;cursor:pointer;min-width:0}
+.weekday-option>span{display:grid;place-items:center;width:100%;max-width:52px;aspect-ratio:1;margin:auto;border:1px solid #dce1cf;border-radius:50%;background:#e9edde;color:#89957b;font-size:13px;transition:background .15s,color .15s}
+.weekday-option input:checked+span{background:var(--green);border-color:var(--green);color:#fffdf4;box-shadow:0 2px 7px #34492a14}
+.weekday-option input:focus-visible+span{outline:2px solid var(--gold);outline-offset:3px}
+.weekday-option input:disabled+span{cursor:not-allowed}
+.repeat-settings .is-disabled{opacity:.45}
+.recurring-card-days{font-size:10px;color:#929d82;margin:10px 0 8px}
+.recurring-card-counts{display:flex;gap:18px;font-size:10px;color:#9c9f8e}
+.recurring-card-counts span:first-child{color:#6b865b}
+.recurring-card-counts strong{font-weight:500;margin:0 2px}
+.recurring-schedule{display:flex;align-items:center;gap:8px;color:#7d8e6a;font-size:11px;margin-top:17px}
+.recurring-schedule .icon{width:15px;height:15px}
+.recurring-totals{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:23px 0}
+.recurring-totals>div{border:1px solid #dde4d1;border-radius:5px;background:#f0f4e7;padding:15px 18px}
+.recurring-totals>div:last-child{background:#f8f1e8;border-color:#e7ddd0}
+.recurring-totals dt{font-size:10px;color:#8c997b}
+.recurring-totals dd{font-family:var(--serif);font-size:29px;color:#607b4f;margin:2px 0 0;line-height:1.4}
+.recurring-totals>div:last-child dt{color:#ae9680}
+.recurring-totals>div:last-child dd{color:#aa7962}
+.recurring-totals small{font-family:var(--sans);font-size:10px;margin-left:6px}
+.occurrence-panel{padding:18px;border:1px solid #e1e4d5;border-radius:5px;background:#fffef9}
+.occurrence-panel h3{font-size:12px;font-weight:500;color:#687b57;margin-bottom:13px}
+.occurrence-date{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:10px;color:#909a7e}
+.occurrence-date input{min-width:0;max-width:100%;padding:7px 9px;border:1px solid #dce1cf;border-radius:4px;background:#f9faf3;color:#697d56;font-size:12px}
+.occurrence-status{font-size:10px;color:#969d87;margin:12px 0}
+.occurrence-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:11px}
+.outcome-button{display:flex;align-items:center;justify-content:center;gap:6px;min-height:43px;padding:9px;border:1px solid #cfd9c2;border-radius:4px;font-size:11px;color:#718662;background:#f5f8ef}
+.outcome-button .icon{width:16px;height:16px}
+.outcome-success[aria-pressed="true"]{background:#607d51;border-color:#607d51;color:#fffdf4}
+.outcome-failure{background:#faf5ee;border-color:#e2d3c6;color:#aa826c}
+.outcome-failure[aria-pressed="true"]{background:#a77b62;border-color:#a77b62;color:#fffdf4}
+.outcome-button:disabled{opacity:.4}
+.occurrence-panel .field-hint{font-size:9px}
+.recurring-steps{margin-top:23px}
+.recurring-task-list{padding-left:22px;margin:0;font-size:11px;color:#8a967b;line-height:2}
+.recurring-history{margin-top:24px}
+.recurring-history ul{list-style:none;padding:0;margin:0}
+.recurring-history li+li{border-top:1px solid #e6e8dc}
+.recurring-history li button{display:flex;align-items:center;justify-content:space-between;width:100%;gap:14px;padding:10px 4px;font-size:10px;color:#98a087;text-align:left}
+.recurring-history li button:hover{background:#f1f4e9}
+.history-success{color:#758f62}.history-failure{color:#b08870}
+@media(max-width:1200px){.tabs button{padding-left:12px;padding-right:12px}}
+@media(max-width:720px){
+  .tabs button{padding-left:6px;padding-right:6px;gap:4px;flex-shrink:0;font-size:10px;min-height:53px}
+  .tabs button .icon{width:13px;height:13px}.tabs button>span{font-size:8px}
+  .repeat-settings{padding:16px 12px}.weekday-options{gap:6px}.weekday-option>span{font-size:12px;min-height:32px}
+  .recurring-totals>div{padding:14px}.occurrence-panel{padding:16px 13px}.occurrence-date input{font-size:16px}
+  .outcome-button{min-height:45px;font-size:12px}
+}
+@media(max-width:360px){.tabs button .icon{display:none}.tabs button{font-size:9px;gap:3px}}
