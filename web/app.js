@@ -67,7 +67,7 @@ function render() {
   const counts = Object.fromEntries(['draft', 'active', 'completed', 'recurring'].map(status => [status, state.quests.filter(q => q.status === status).length]));
   const ready = state.quests.filter(canClaim).length;
   $('#stats-strip').innerHTML = [
-    ['book', '진행 중인 모험', counts.active, '한 걸음씩, 꾸준히', ''],
+    ['book', '진행 중인 퀘스트', counts.active, '한 걸음씩, 꾸준히', ''],
     ['gift', '나를 기다리는 보상', ready, '충분히 잘해냈어요', 'gold'],
     ['check', '완료한 퀘스트', counts.completed, '쌓여가는 작은 성취', '']
   ].map(([name, label, count, note, color]) => `<div class="stat"><span class="stat-icon ${color}">${icon(name)}</span><div><p class="stat-label">${label}</p><p class="stat-number">${count}<small>개</small></p></div><span class="stat-note">${note}</span></div>`).join('');
@@ -82,7 +82,7 @@ function render() {
   document.querySelectorAll('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === activeNav));
   $('#reward-nav-count').textContent = counts.completed;
   $('#recurring-nav-count').textContent = counts.recurring;
-  $('#list-title').textContent = { draft: '아직 쓰고 있는 이야기', active: '진행 중인 퀘스트', completed: '해낸 모험과 받은 선물', recurring: '꾸준히 이어가는 모험' }[state.tab];
+  $('#list-title').textContent = { draft: '아직 쓰고 있는 이야기', active: '진행 중인 퀘스트', completed: '해낸 모험과 받은 선물', recurring: '꾸준히 반복되는 모험' }[state.tab];
   $('#quest-list-panel').setAttribute('aria-labelledby', `tab-${state.tab}`);
   const view = getQuestView(state.quests, state);
   const filtered = view.quests;
@@ -154,7 +154,7 @@ function switchTab(tab) {
 
 function renderRecurringCard(q) {
   const counts = recurrenceCounts(q), today = occurrenceState(q);
-  const caption = today.outcome === 'success' ? '오늘은 성공했어요' : today.outcome === 'failure' ? '오늘의 실패를 기록했어요' : today.scheduled ? '오늘의 기록을 기다려요' : '오늘은 쉬어가는 날이에요';
+  const caption = today.outcome === 'success' ? '오늘은 성공했어요' : today.outcome === 'failure' ? '오늘은 실패를 기록했어요' : today.scheduled ? '오늘의 기록을 기다려요' : '오늘은 쉬어가는 날이에요';
   return `<button class="quest-card${state.selectedId === q.id ? ' selected' : ''}" data-quest="${escape(q.id)}" aria-pressed="${state.selectedId === q.id}"><div class="card-meta">${icon('repeat')}반복퀘스트 · ${escape(q.category)}</div><h3 class="quest-card-title">${renderQuestFlags(q)}<span class="quest-card-title-text">${escape(q.title)}</span></h3><p class="recurring-card-days">${recurrenceLabel(q.recurrence)}</p><div class="recurring-card-counts"><span>성공 <strong>${counts.success}</strong>회</span><span>실패 <strong>${counts.failure}</strong>회</span></div><div class="card-bottom${today.outcome === 'success' ? ' complete' : ''}">${icon(today.outcome === 'success' ? 'check' : 'repeat')}${caption}</div></button>`;
 }
 
@@ -608,7 +608,7 @@ $('#import-file').addEventListener('change', async event => {
 });
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; $('#install-button').hidden = false; });
 window.addEventListener('appinstalled', () => { installPrompt = null; $('#install-button').hidden = true; });
-function updateConnection() { $('#connection-status').textContent = navigator.onLine ? '이 브라우저에 소중히 저장해요' : '오프라인 · 일지를 이어가세요'; }
+function updateConnection() { $('#connection-status').textContent = navigator.onLine ? '브라우저에 소중히 기록 중' : '오프라인 · 일지를 이어가세요'; }
 window.addEventListener('online', () => { updateConnection(); scheduleSync(0); });
 window.addEventListener('offline', () => { updateConnection(); renderCloudStatus(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && state.editorId) saveDraft().catch(() => {}); });
