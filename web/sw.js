@@ -1,5 +1,5 @@
-const CACHE = 'quest-maker-shell-v17';
-const SHELL = ['./', './index.html', './register-sw.js?v=17', './styles.css?v=17', './app.js?v=17', './domain.js', './list-view.js', './recurrence.js', './guides.js', './storage.js',
+const CACHE = 'quest-maker-shell-v18';
+const SHELL = ['./', './index.html', './register-sw.js?v=18', './styles.css?v=18', './app.js?v=18', './domain.js', './list-view.js', './recurrence.js', './guides.js', './guide-sync.js', './storage.js',
   './manifest.webmanifest', './assets/icon.svg', './assets/guide.png', './assets/guide-rua.png', './assets/icon-192.png', './assets/icon-512.png',
   './config.js', './cloud.js', './sync.js', './vendor/supabase-2.118.0.js'];
 self.addEventListener('install', event => {

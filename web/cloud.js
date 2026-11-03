@@ -1,4 +1,5 @@
 import { validateQuests } from './domain.js';
+import { GUIDES } from './guides.js';
 const BUCKET = 'quest-rewards';
 const digest = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 let sdkPromise;
@@ -87,6 +88,14 @@ export async function createCloud(config, onSession) {
       if (error) throw error;
       return data.session;
     },
+    guideForUser(user) {
+      return new GuideRemote({ url, publishableKey: config.publishableKey, userId: user.id,
+        getSession: async () => {
+          const { data, error } = await client.auth.getSession();
+          if (error) throw error;
+          return data.session;
+        } });
+    },
     forUser(user) {
       // Bind every request to this account, even when another tab changes sessions.
       const accountClient = createClient(url, config.publishableKey, {
@@ -99,6 +108,35 @@ export async function createCloud(config, onSession) {
       return new QuestRemote(accountClient, user.id);
     }
   };
+}
+
+export class GuideRemote {
+  constructor({ url, publishableKey, userId, getSession, fetcher = timedFetch }) {
+    Object.assign(this, { url, publishableKey, userId, getSession, fetcher });
+  }
+  async request(method, guideId) {
+    const session = await this.getSession();
+    if (!session?.access_token || session.user?.id !== this.userId) throw new Error('다시 로그인한 뒤 길잡이 설정을 동기화해주세요.');
+    // Capture this account's bearer token; a later session change cannot redirect a write.
+    const response = await this.fetcher(`${this.url}/auth/v1/user`, {
+      method, headers: { apikey: this.publishableKey, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      ...(method === 'PUT' ? { body: JSON.stringify({ data: { quest_maker_guide: guideId } }) } : {}),
+      cache: 'no-store'
+    });
+    if (!response.ok) throw new Error('길잡이 설정을 동기화하지 못했어요. 연결을 확인해주세요. 기기의 선택은 유지돼요.');
+    const user = await response.json();
+    if (user?.id !== this.userId) throw new Error('길잡이 설정의 계정 정보를 확인해주세요.');
+    return user;
+  }
+  async read() {
+    const user = await this.request('GET');
+    return user.user_metadata?.quest_maker_guide ?? null;
+  }
+  async write(guideId) {
+    if (!GUIDES.some(guide => guide.id === guideId)) throw new Error('선택할 길잡이를 확인해주세요.');
+    const user = await this.request('PUT', guideId);
+    if (user.user_metadata?.quest_maker_guide !== guideId) throw new Error('계정에 길잡이 선택이 저장되었는지 확인하지 못했어요.');
+  }
 }
 
 export class QuestRemote {

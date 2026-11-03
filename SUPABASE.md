@@ -39,6 +39,9 @@ Supabase 관리자 계정과 별도로 앱용 계정을 만드는 과정입니�
 - 사진은 비공개 버킷에 보관하고, 인증 후 다운로드합니다. 오프라인 사용을 위해 기기에도 사진을 보관합니다.
 - 계정마다 기기 캐시와 전송 대기 기록을 분리합니다. 브라우저 사이트 데이터를 지우면 아직 전송되지 않은 기록은 사라질 수 있습니다.
 - 서버 계정이 없는 기기의 기록은 자동 업로드하지 않습니다. 사용자가 가져오기를 눌렀을 때 전송합니다.
+- 길잡이 캐릭터 선택도 같은 계정에 동기화합니다. 계정에 선택이 없을 때만 기존 기기 선택을 처음 가져옵니다.
+- 캐릭터는 Supabase Auth 사용자 프로필의 `quest_maker_guide` 값으로 저장합니다. 추가 SQL 설정은 필요하지 않습니다. 로그인 전 선택과 계정별 전송 대기를 따로 보관합니다.
+- 다른 기기의 캐릭터가 바로 바뀌지 않으면 양쪽 앱을 최신 버전으로 새로고침하고 **지금 동기화**를 누릅니다. 오프라인 선택은 재연결 후 전송되며, 여러 기기의 선택은 나중에 서버에 저장된 값을 따릅니다.
 
 백업 파일 저장·불러오기 기능도 계속 사용할 수 있습니다.
 비밀번호를 잊은 경우 프로젝트 소유자는 Supabase의 Authentication → Users에서 계정 관리 기능을 이용할 수 있습니다.
@@ -58,6 +61,7 @@ Supabase 관리자 계정과 별도로 앱용 계정을 만드는 과정입니�
 - `web/config.js`: 브라우저 공개 연결 설정
 - `web/cloud.js`: 이메일 인증, 사용자별 서버 요청, 사진 저장
 - `web/sync.js`: 전송 대기·버전·충돌·삭제 처리
+- `web/guide-sync.js`, `web/guides.js`: 길잡이 선택·계정 캐시·동기화
 - `web/storage.js`: 기기 저장 공간과 계정별 캐시
 - `supabase/setup.sql`: 서버 테이블·함수·접근 규칙·비공개 버킷
 - `tests/sync.test.mjs`: 동기화와 인증 동작 검사
@@ -66,3 +70,5 @@ Supabase SDK 2.118.0을 `web/vendor/`에 포함했습니다. 별도 npm 설치�
 SDK 라이선스는 `web/vendor/SUPABASE-LICENSE`에 있습니다.
 
 참고: [이메일 로그인](https://supabase.com/docs/guides/auth/passwords), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [사진 접근 규칙](https://supabase.com/docs/guides/storage/security/access-control), [무료 플랜](https://supabase.com/pricing)
+
+길잡이 설정 API: [인증된 사용자 조회·프로필 업데이트](https://supabase.github.io/auth/#put-user).

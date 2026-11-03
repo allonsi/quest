@@ -5,7 +5,8 @@ import { loadQuests, saveQuests, loadAccountJournal, saveAccountJournal } from '
 import { JournalSync, signature } from './sync.js';
 import { createCloud } from './cloud.js';
 import { cloudConfig } from './config.js';
-import { GUIDES, GUIDE_STORAGE_KEY, getGuide, loadGuidePreference, saveGuidePreference, guideWelcome } from './guides.js';
+import { GUIDES, getGuide, loadGuidePreference, guideWelcome } from './guides.js';
+import { GuideSync } from './guide-sync.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -20,6 +21,7 @@ let editLock = false, accountSwitching = false, deferredSession, authQueue = Pro
 let guestCount = 0;
 let authMode = 'signin';
 let selectedGuideId = loadGuidePreference(), helpTopic = 'welcome';
+const guideSync = new GuideSync({ onChange: id => { selectedGuideId = id; renderGuide(); } });
 const journal = new JournalSync({
   disk: { loadGuest: loadQuests, saveGuest: saveQuests, loadAccount: loadAccountJournal, saveAccount: saveAccountJournal },
   onChange: quests => { state.quests = quests; if (state.ready) render(); },
@@ -55,15 +57,16 @@ function initGuides() {
   $('#guide-choices').addEventListener('change', event => {
     const input = event.target;
     if (input.name !== 'guide' || !input.checked) return;
+    if (accountSwitching) { renderGuide(); toast('계정의 설정을 여는 중이에요. 잠시만 기다려주세요.'); return; }
     try {
-      selectedGuideId = saveGuidePreference(input.value);
-      renderGuide();
+      guideSync.select(input.value);
+      if (accountUser) { cloudPhase = 'pending'; renderCloudStatus(); scheduleSync(0); }
       toast(`${getGuide(selectedGuideId).name}와 함께 작은 모험을 이어가요!`);
     } catch (error) { renderGuide(); toast(error.message, true); }
   });
   window.addEventListener('storage', event => {
-    if (event.key !== GUIDE_STORAGE_KEY && event.key !== null) return;
-    selectedGuideId = loadGuidePreference(); renderGuide();
+    if (event.key !== guideSync.storageKey && event.key !== null) return;
+    guideSync.refresh(); scheduleSync(0);
   });
 }
 
@@ -487,7 +490,7 @@ document.addEventListener('click', async event => {
     }
     if (action === 'cloud-logout') {
       await writeQueue;
-      if (journal.pendingCount) toast('동기화 대기 기록은 이 기기에 보관해요. 같은 계정으로 다시 로그인하면 이어서 전송해요.');
+      if (journal.pendingCount || guideSync.pendingCount) toast('동기화 대기 기록은 이 기기에 보관해요. 같은 계정으로 다시 로그인하면 이어서 전송해요.');
       await cloud.signOut();
       await receiveSession(null);
     }
@@ -670,7 +673,7 @@ function renderCloudStatus() {
   if (!status) return;
   $('#cloud-account').textContent = accountUser?.email || (accountUser ? '로그인된 계정' : '이 기기의 일지');
   const messages = { local: '로그인하면 다른 기기에서도 같은 기록을 이어서 쓸 수 있어요.',
-    pending: `${journal.pendingCount}개 변경 사항을 동기화할 예정이에요.`, syncing: '계정의 일지를 동기화하고 있어요.',
+    pending: `${journal.pendingCount + guideSync.pendingCount}개 변경 사항을 동기화할 예정이에요.`, syncing: '계정의 일지를 동기화하고 있어요.',
     synced: '계정에 동기화했어요. 다른 기기에서도 이어서 볼 수 있어요.',
     error: cloudMessage || '연결을 확인해주세요. 현재 기기 기록은 유지돼요.' };
   status.textContent = accountUser && !navigator.onLine ? '오프라인이에요. 수정한 기록은 이 기기에 보관해요.' : messages[cloudPhase];
@@ -706,6 +709,8 @@ function receiveSession(session) {
         ? await journal.openAccount(`${new URL(cloud.url).hostname}:${nextUser.id}`, cloud.forUser(nextUser))
         : await journal.openGuest(exampleQuests);
       accountUser = nextUser; state.quests = quests;
+      if (nextUser) guideSync.openAccount(`${new URL(cloud.url).hostname}:${nextUser.id}`, cloud.guideForUser(nextUser));
+      else guideSync.openGuest();
       state.query = ''; state.priorityFilter = 'all'; $('#quest-search').value = ''; state.selectedId = null; state.tab = 'active';
       $('#journal-body').classList.remove('show-detail');
       cloudPhase = nextUser ? 'pending' : 'local'; cloudMessage = '';
@@ -726,11 +731,22 @@ function scheduleSync(delay = 800) {
 async function runSync(showErrors = false) {
   if (!accountUser || editLock || accountSwitching || !navigator.onLine) return;
   await writeQueue;
+  if (!accountUser || !journal.scope || accountSwitching) return;
+  const scope = journal.scope;
   try {
     await journal.sync();
+    if (scope !== journal.scope || accountSwitching) return;
+    cloudPhase = 'syncing'; renderCloudStatus();
+    await guideSync.sync();
+    if (scope !== journal.scope || accountSwitching) return;
+    cloudPhase = journal.pendingCount || guideSync.pendingCount ? 'pending' : 'synced'; cloudMessage = '';
     renderCloudStatus();
-    if (journal.pendingCount) scheduleSync(1200);
-  } catch (error) { if (showErrors) toast(error.message, true); }
+    if (journal.pendingCount || guideSync.pendingCount) scheduleSync(1200);
+  } catch (error) {
+    if (scope !== journal.scope) return;
+    cloudPhase = 'error'; cloudMessage = error.message; renderCloudStatus();
+    if (showErrors) toast(error.message, true);
+  }
 }
 
 async function importGuestQuests() {

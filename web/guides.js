@@ -9,7 +9,7 @@ export function getGuide(id) {
   return GUIDES.find(guide => guide.id === id) || GUIDES.find(guide => guide.id === DEFAULT_GUIDE);
 }
 
-// Appearance is a browser preference, separate from guest/account journals.
+// Guest preference. Signed-in choices have a separate account cache/outbox.
 export function loadGuidePreference(storage) {
   try { return getGuide((storage ?? globalThis.localStorage).getItem(GUIDE_STORAGE_KEY)).id; }
   catch { return DEFAULT_GUIDE; }
