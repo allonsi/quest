@@ -5,6 +5,7 @@ import { loadQuests, saveQuests, loadAccountJournal, saveAccountJournal } from '
 import { JournalSync, signature } from './sync.js';
 import { createCloud } from './cloud.js';
 import { cloudConfig } from './config.js';
+import { GUIDES, GUIDE_STORAGE_KEY, getGuide, loadGuidePreference, saveGuidePreference, guideWelcome } from './guides.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -18,6 +19,7 @@ let cloud, accountUser = null, cloudPhase = 'local', cloudMessage = '', syncTime
 let editLock = false, accountSwitching = false, deferredSession, authQueue = Promise.resolve();
 let guestCount = 0;
 let authMode = 'signin';
+let selectedGuideId = loadGuidePreference(), helpTopic = 'welcome';
 const journal = new JournalSync({
   disk: { loadGuest: loadQuests, saveGuest: saveQuests, loadAccount: loadAccountJournal, saveAccount: saveAccountJournal },
   onChange: quests => { state.quests = quests; if (state.ready) render(); },
@@ -31,9 +33,38 @@ function toast(message, error = false) {
   clearTimeout(toastTimer);
   const box = $('#toast');
   box.className = `toast${error ? ' error' : ''}`;
-  box.innerHTML = `${error ? icon('spark') : '<img src="./assets/guide.png" alt="루미">'}<span>${escape(message)}</span>`;
+  const guide = getGuide(selectedGuideId);
+  box.innerHTML = `${error ? icon('spark') : `<img data-guide-image src="${guide.image}" alt="${guide.alt}">`}<span>${escape(message)}</span>`;
   box.hidden = false;
   toastTimer = setTimeout(() => { box.hidden = true; }, error ? 7000 : 5000);
+}
+
+function renderGuide() {
+  const guide = getGuide(selectedGuideId);
+  document.querySelectorAll('[data-guide-image]').forEach(image => { image.src = guide.image; image.alt = guide.alt; });
+  document.querySelectorAll('[data-guide-name]').forEach(label => { label.textContent = `길잡이 ${guide.name}`; });
+  document.querySelectorAll('[data-guide-ask]').forEach(label => { label.textContent = `${guide.name}에게 물어보기`; });
+  $('.mobile-help').setAttribute('aria-label', `길잡이 ${guide.name}에게 물어보기`);
+  document.querySelectorAll('[name="guide"]').forEach(input => { input.checked = input.value === guide.id; });
+  if (helpTopic === 'welcome') $('#npc-message').textContent = guideWelcome(guide.id);
+}
+
+function initGuides() {
+  $('#guide-choices').innerHTML = `<legend class="sr-only">함께할 길잡이 선택</legend>${GUIDES.map(guide => `<label class="guide-choice"><input type="radio" class="sr-only" name="guide" value="${guide.id}"><span class="guide-choice-card"><img src="${guide.image}" width="110" height="110" alt="${guide.alt}"><strong>${guide.name}</strong><span class="guide-choice-description">${guide.description}</span><span class="guide-choice-state">${icon('check')}선택됨</span></span></label>`).join('')}`;
+  renderGuide();
+  $('#guide-choices').addEventListener('change', event => {
+    const input = event.target;
+    if (input.name !== 'guide' || !input.checked) return;
+    try {
+      selectedGuideId = saveGuidePreference(input.value);
+      renderGuide();
+      toast(`${getGuide(selectedGuideId).name}와 함께 작은 모험을 이어가요!`);
+    } catch (error) { renderGuide(); toast(error.message, true); }
+  });
+  window.addEventListener('storage', event => {
+    if (event.key !== GUIDE_STORAGE_KEY && event.key !== null) return;
+    selectedGuideId = loadGuidePreference(); renderGuide();
+  });
 }
 
 function setSaveStatus(message) {
@@ -328,7 +359,6 @@ async function compressPhoto(file) {
 }
 
 const helpMessages = {
-  welcome: '안녕하세요, 모험가님! 저는 작은 모험의 길잡이 루미예요.\n무엇이든 편하게 물어보세요. 오늘도 당신의 속도로 나아가면 충분해요.',
   start: '‘새 퀘스트 만들기’를 누르고, 이름과 나를 위한 보상을 적어주세요. 작은 발걸음은 필요할 때만 추가하면 돼요.\n‘퀘스트 시작하기’를 누르면 모험이 시작돼요! 다 쓰지 못해도 작성 중 탭에 자동으로 보관해드려요.',
   chain: '하위 퀘스트는 순서 없이 자유롭게 체크해요.\n연계 퀘스트는 앞선 연계 퀘스트를 마쳐야 다음 것을 체크할 수 있어요. 앞 단계를 해제하면 뒤의 연계 단계도 함께 해제돼요. 하위 퀘스트에는 영향을 주지 않아요.',
   reward: '퀘스트를 완료하면 ‘나에게 보상 주기’가 열려요. 발걸음이 없으면 퀘스트 완료를 한 번 체크해주세요.\n보상을 받은 순간을 글이나 사진으로 남기면 완료됨 탭과 보상 보관함에 소중히 보관돼요. 100%를 달성해도 보상을 기록하기 전까지는 진행 중이에요.',
@@ -385,7 +415,7 @@ document.addEventListener('click', async event => {
   if (!target || target.disabled) return;
   try {
     if (target.dataset.close) { await closeDialog(target.dataset.close); return; }
-    if (target.dataset.topic) { $('#npc-message').textContent = helpMessages[target.dataset.topic]; return; }
+    if (target.dataset.topic) { helpTopic = target.dataset.topic; $('#npc-message').textContent = helpMessages[helpTopic]; return; }
     if (target.dataset.authMode) { setAuthMode(target.dataset.authMode); return; }
     if (!state.ready) return;
     if (accountSwitching) { toast('계정의 일지를 여는 중이에요. 잠시만 기다려주세요.'); return; }
@@ -438,8 +468,9 @@ document.addEventListener('click', async event => {
       state.priorityFilter = 'all'; state.query = ''; $('#quest-search').value = '';
       render(); $('#quest-filter').focus();
     }
-    if (action === 'help') { $('#npc-message').textContent = helpMessages.welcome; $('#help-dialog').showModal(); }
+    if (action === 'help') { helpTopic = 'welcome'; $('#npc-message').textContent = guideWelcome(selectedGuideId); $('#help-dialog').showModal(); }
     if (action === 'settings') {
+      renderGuide();
       renderCloudStatus();
       $('#install-button').hidden = !installPrompt;
       if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) $('#install-description').textContent = '지금 앱 모드로 사용하고 있어요. 인터넷 없이도 나만의 일지를 이어갈 수 있어요.';
@@ -770,4 +801,5 @@ $('#auth-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 $('#auth-dialog').addEventListener('close', () => { $('#auth-password').value = ''; });
+initGuides();
 init();

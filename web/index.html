@@ -8,7 +8,7 @@
   <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./assets/icon-192.png">
   <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="stylesheet" href="./styles.css?v=16">
+  <link rel="stylesheet" href="./styles.css?v=17">
   <title>Quest Maker · 나만의 퀘스트 일지</title>
 </head>
 <body>
@@ -45,10 +45,10 @@
       </nav>
       <div class="guide-card">
         <span class="guide-eyebrow">당신과 작은 모험을 함께하는</span>
-        <img src="./assets/guide.png" width="160" height="160" alt="세이지색 머리의 길잡이 루미" class="guide-portrait">
-        <div class="guide-name">길잡이 루미</div>
+        <img src="./assets/guide.png" width="160" height="160" alt="세이지색 머리의 길잡이 루미" class="guide-portrait" data-guide-image>
+        <div class="guide-name" data-guide-name>길잡이 루미</div>
         <p>“아주 작은 한 걸음도<br>뜻깊은 모험의 시작이에요.”</p>
-        <button class="guide-button" data-action="help"><span class="question-mark">?</span>루미에게 물어보기<svg class="icon"><use href="#i-arrow"/></svg></button>
+        <button class="guide-button" data-action="help"><span class="question-mark">?</span><span data-guide-ask>루미에게 물어보기</span><svg class="icon"><use href="#i-arrow"/></svg></button>
       </div>
       <button class="sidebar-settings" data-action="settings"><svg class="icon"><use href="#i-settings"/></svg>일지 설정 · 데이터 백업</button>
       <div class="sidebar-footer"><span class="status-dot"></span><span id="connection-status">브라우저에 소중히 기록 중</span></div>
@@ -56,7 +56,7 @@
     <main id="main-content" class="main-content">
       <header class="topbar"><span class="breadcrumb"><svg class="icon"><use href="#i-book"/></svg><span>나만의 퀘스트 일지</span></span><div class="topbar-right"><span class="local-label"><span class="status-dot"></span>이 기기에 저장 중</span><button class="icon-button mobile-settings" data-action="settings" aria-label="일지 설정"><svg class="icon"><use href="#i-settings"/></svg></button><span class="adventurer-avatar" title="오늘도 모험하는 나">나</span></div></header>
       <div class="page-content">
-        <section class="page-heading"><div><div class="eyebrow"><span></span> A LITTLE QUEST, A LITTLE HAPPINESS</div><h1>오늘도 이어지는 작은 모험</h1><p>할 일을 퀘스트로, 성취를 선물로.</p></div><button class="button button-gold" data-action="new"><svg class="icon"><use href="#i-plus"/></svg>새 퀘스트 만들기</button></section>
+        <section class="page-heading"><div><div class="eyebrow"><span></span> A LITTLE QUEST, A LITTLE HAPPINESS</div><h1>퀘스트 일지</h1><p>할 일을 퀘스트로, 성취를 선물로.</p></div><button class="button button-gold" data-action="new"><svg class="icon"><use href="#i-plus"/></svg>새 퀘스트 만들기</button></section>
         <section class="stats-strip" aria-label="나의 퀘스트 현황" id="stats-strip"></section>
         <section class="journal" aria-label="퀘스트 일지">
           <div class="journal-top"><div class="tabs" role="tablist" aria-label="퀘스트 상태"><button role="tab" id="tab-draft" data-tab="draft" aria-selected="false" aria-controls="quest-list-panel"><svg class="icon"><use href="#i-edit"/></svg>작성 중 <span></span></button><button role="tab" id="tab-active" data-tab="active" class="selected" aria-selected="true" aria-controls="quest-list-panel"><svg class="icon"><use href="#i-book"/></svg>진행 중 <span></span></button><button role="tab" id="tab-completed" data-tab="completed" aria-selected="false" aria-controls="quest-list-panel"><svg class="icon"><use href="#i-check"/></svg>완료됨 <span></span></button><button role="tab" id="tab-recurring" data-tab="recurring" aria-selected="false" aria-controls="quest-list-panel"><svg class="icon"><use href="#i-repeat"/></svg>반복퀘스트 <span></span></button></div><span class="journal-label">MY QUEST JOURNAL <svg class="icon"><use href="#i-spark"/></svg></span></div>
@@ -68,7 +68,7 @@
             <section id="quest-detail" class="quest-detail" aria-label="선택한 퀘스트 상세"></section>
           </div>
         </section>
-        <footer class="page-footer"><span>작은 성취를 모아, 나다운 하루를.</span><span>QUEST MAKER <span class="footer-star">✦</span> EST. 2026</span></footer>
+        <footer class="page-footer"><span>작은 성취를 모아 소소한 행복을.</span><span>QUEST MAKER <span class="footer-star">✦</span> EST. 2026</span></footer>
       </div>
     </main>
   </div>
@@ -110,11 +110,15 @@
 
   <dialog id="reward-dialog" class="modal reward-modal" aria-labelledby="reward-title"><div class="modal-heading"><div><span class="eyebrow">YOU DID IT!</span><h2 id="reward-title">나에게 선물을 건넬 시간</h2></div><button class="icon-button" data-close="reward-dialog" aria-label="보상 기록 창 닫기"><svg class="icon"><use href="#i-close"/></svg></button></div><form id="reward-form"><div class="modal-body"><div class="reward-celebration"><svg class="icon"><use href="#i-gift"/></svg><p id="reward-name"></p><span>여기까지 온 나, 정말 잘했어요.</span></div><label class="field">보상을 받은 순간<textarea id="reward-note" maxlength="3000" rows="4" placeholder="어떤 선물을 받았나요? 지금의 기분을 짧게 남겨보세요."></textarea></label><label class="photo-upload" for="reward-photo"><svg class="icon"><use href="#i-camera"/></svg><strong>이 순간을 사진으로 남기기</strong><span>선택 사항 · 사진은 가볍게 압축해서 저장해요</span><input id="reward-photo" type="file" accept="image/*"></label><div id="photo-preview" class="photo-preview" hidden></div><p class="field-hint">글이나 사진 중 하나만 남겨도 충분해요.</p><p id="reward-error" class="form-error" role="alert" hidden></p></div><div class="modal-footer"><span>나의 노력에, 나의 보상을.</span><button type="submit" id="claim-submit" class="button button-gold"><svg class="icon"><use href="#i-gift"/></svg>보상 기록하고 완료하기</button></div></form></dialog>
 
-  <dialog id="help-dialog" class="modal help-modal" aria-labelledby="help-title"><div class="modal-heading"><div><span class="eyebrow">YOUR QUEST COMPANION</span><h2 id="help-title">길잡이 루미</h2></div><button class="icon-button" data-close="help-dialog" aria-label="도움말 닫기"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="modal-body"><div class="npc-conversation"><img src="./assets/guide.png" width="120" height="120" alt="길잡이 루미"><div class="npc-bubble" id="npc-message" aria-live="polite"></div></div><div class="help-topics"><button data-topic="start">퀘스트는 어떻게 만드나요?<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="chain">하위·연계 퀘스트가 궁금해요<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="reward">보상은 언제 받을 수 있나요?<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="save">내 일지는 어디에 저장되나요?<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="install">설치하거나 오프라인으로 쓰고 싶어요<svg class="icon"><use href="#i-arrow"/></svg></button></div></div></dialog>
+  <dialog id="help-dialog" class="modal help-modal" aria-labelledby="help-title"><div class="modal-heading"><div><span class="eyebrow">YOUR QUEST COMPANION</span><h2 id="help-title" data-guide-name>길잡이 루미</h2></div><button class="icon-button" data-close="help-dialog" aria-label="도움말 닫기"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="modal-body"><div class="npc-conversation"><img src="./assets/guide.png" width="120" height="120" alt="길잡이 루미" data-guide-image><div class="npc-bubble" id="npc-message" aria-live="polite"></div></div><div class="help-topics"><button data-topic="start">퀘스트는 어떻게 만드나요?<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="chain">하위·연계 퀘스트가 궁금해요<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="reward">보상은 언제 받을 수 있나요?<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="save">내 일지는 어디에 저장되나요?<svg class="icon"><use href="#i-arrow"/></svg></button><button data-topic="install">설치하거나 오프라인으로 쓰고 싶어요<svg class="icon"><use href="#i-arrow"/></svg></button></div></div></dialog>
 
   <dialog id="settings-dialog" class="modal settings-modal" aria-labelledby="settings-title">
     <div class="modal-heading"><div><span class="eyebrow">KEEP YOUR ADVENTURE SAFE</span><h2 id="settings-title">일지 설정</h2></div><button class="icon-button" data-close="settings-dialog" aria-label="설정 닫기"><svg class="icon"><use href="#i-close"/></svg></button></div>
     <div class="modal-body">
+      <section class="setting-section guide-setting" aria-labelledby="guide-setting-title">
+        <h3 id="guide-setting-title">나의 길잡이</h3>
+        <fieldset id="guide-choices" class="guide-options"><legend class="sr-only">함께할 길잡이 선택</legend></fieldset>
+      </section>
       <div class="setting-section cloud-panel">
         <h3>어디서든 이어지는 나의 모험</h3>
         <div class="cloud-account"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg><strong id="cloud-account">이 기기의 일지</strong></div>
@@ -144,7 +148,7 @@
     </form>
   </dialog>
   <dialog id="confirm-dialog" class="modal confirm-modal" aria-labelledby="confirm-title"><div class="modal-heading"><h2 id="confirm-title">퀘스트를 삭제할까요?</h2></div><div class="modal-body"><p id="confirm-message"></p></div><div class="modal-footer"><button class="button button-outline" data-close="confirm-dialog">취소</button><button class="button button-danger" id="confirm-accept">삭제하기</button></div></dialog>
-  <script src="./register-sw.js?v=16" defer></script>
-  <script type="module" src="./app.js?v=16"></script>
+  <script src="./register-sw.js?v=17" defer></script>
+  <script type="module" src="./app.js?v=17"></script>
 </body>
 </html>

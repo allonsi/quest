@@ -1,6 +1,6 @@
-const CACHE = 'quest-maker-shell-v16';
-const SHELL = ['./', './index.html', './register-sw.js?v=16', './styles.css?v=16', './app.js?v=16', './domain.js', './list-view.js', './recurrence.js', './storage.js',
-  './manifest.webmanifest', './assets/icon.svg', './assets/guide.png', './assets/icon-192.png', './assets/icon-512.png',
+const CACHE = 'quest-maker-shell-v17';
+const SHELL = ['./', './index.html', './register-sw.js?v=17', './styles.css?v=17', './app.js?v=17', './domain.js', './list-view.js', './recurrence.js', './guides.js', './storage.js',
+  './manifest.webmanifest', './assets/icon.svg', './assets/guide.png', './assets/guide-rua.png', './assets/icon-192.png', './assets/icon-512.png',
   './config.js', './cloud.js', './sync.js', './vendor/supabase-2.118.0.js'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL.map(path => new Request(path, { cache: 'reload' })))).then(() => self.skipWaiting()));

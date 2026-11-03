@@ -92,3 +92,18 @@ dialog{border:1px solid #d2d2be;padding:0;background:var(--white);color:var(--in
   .outcome-button{min-height:45px;font-size:12px}
 }
 @media(max-width:360px){.tabs button .icon{display:none}.tabs button{font-size:9px;gap:3px}}
+
+/* Guide preference: native radio controls with full-card click targets. */
+.guide-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0;padding:0;border:0;min-width:0}
+.guide-choice{position:relative;min-width:0;cursor:pointer}
+.guide-choice-card{display:flex;flex-direction:column;align-items:center;gap:5px;padding:15px 9px 11px;border:1px solid #dce1cf;border-radius:5px;background:#f7f7ef;color:#7e8b6d;text-align:center;height:100%}
+.guide-choice-card img{display:block;width:110px;max-width:100%;height:110px;object-fit:contain;margin-bottom:5px}
+.guide-choice-card strong{font-size:13px;font-weight:500;color:#607451}
+.guide-choice-description{font-size:9px;color:#98a184;overflow-wrap:anywhere}
+.guide-choice-state{display:flex;align-items:center;gap:4px;font-size:9px;min-height:20px;color:#6c8458;visibility:hidden}
+.guide-choice-state .icon{width:12px;height:12px}
+.guide-choice input:checked+.guide-choice-card{border-color:#91a77c;background:#edf2e3;box-shadow:inset 0 0 0 1px #91a77c}
+.guide-choice input:checked+.guide-choice-card .guide-choice-state{visibility:visible}
+.guide-choice input:focus-visible+.guide-choice-card{outline:2px solid var(--gold);outline-offset:3px}
+.guide-choice:hover .guide-choice-card{border-color:#a3b28f}
+@media(max-width:360px){.guide-options{gap:9px}.guide-choice-card{padding-left:6px;padding-right:6px}.guide-choice-description{font-size:8px}}
