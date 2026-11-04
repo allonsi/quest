@@ -1,4 +1,4 @@
-import { makeQuest, uid, progress, matchesPriority, isUnlocked, normalizeTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
+import { makeQuest, uid, progress, matchesPriority, isUnlocked, normalizeTasks, reorderTasks, toggleTask, toggleGoal, startQuest, canClaim, claimReward, validateQuests, exampleQuests } from './domain.js';
 import { getQuestView } from './list-view.js';
 import { WEEKDAYS, localDateKey, calendarDate, recurrenceLabel, recurrenceCounts, occurrenceState, recordOccurrence } from './recurrence.js';
 import { loadQuests, saveQuests, loadAccountJournal, saveAccountJournal } from './storage.js';
@@ -7,6 +7,7 @@ import { createCloud } from './cloud.js';
 import { cloudConfig } from './config.js';
 import { GUIDES, getGuide, loadGuidePreference, guideWelcome } from './guides.js';
 import { GuideSync } from './guide-sync.js';
+import { questStatus, clockFields, parseClockFields, durationFields, parseDurationFields } from './time-limit.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -15,6 +16,7 @@ const state = { quests: [], tab: 'active', activeSort: 'newest', priorityFilter:
 const categoryIcons = { '일상': 'leaf', '공부': 'book', '건강': 'spark', '나를 위한 일': 'gift' };
 let writeQueue = Promise.resolve();
 let draftTimer, toastTimer, editorTasks = [], rewardPhoto = null, photoJob = 0, photoPending = false;
+let taskDrag = null, deadlineTimer;
 let detailPhotoUrl, previewPhotoUrl, installPrompt, confirmCallback;
 let cloud, accountUser = null, cloudPhase = 'local', cloudMessage = '', syncTimer;
 let editLock = false, accountSwitching = false, deferredSession, authQueue = Promise.resolve();
@@ -98,7 +100,9 @@ function replaceQuest(quests, quest) {
 }
 
 function render() {
-  const counts = Object.fromEntries(['draft', 'active', 'completed', 'recurring'].map(status => [status, state.quests.filter(q => q.status === status).length]));
+  const now = new Date();
+  const counts = Object.fromEntries(['draft', 'active', 'completed', 'recurring', 'expired'].map(status => [status, state.quests.filter(q => questStatus(q, now) === status).length]));
+  scheduleDeadlineRefresh(now);
   const ready = state.quests.filter(canClaim).length;
   $('#stats-strip').innerHTML = [
     ['book', '진행 중인 퀘스트', counts.active, '한 걸음씩, 꾸준히', ''],
@@ -116,9 +120,9 @@ function render() {
   document.querySelectorAll('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === activeNav));
   $('#reward-nav-count').textContent = counts.completed;
   $('#recurring-nav-count').textContent = counts.recurring;
-  $('#list-title').textContent = { draft: '아직 쓰고 있는 이야기', active: '진행 중인 퀘스트', completed: '해낸 모험과 받은 선물', recurring: '꾸준히 반복되는 모험' }[state.tab];
+  $('#list-title').textContent = { draft: '아직 쓰고 있는 이야기', active: '진행 중인 퀘스트', completed: '해낸 모험과 받은 선물', recurring: '꾸준히 반복되는 모험', expired: '다시 도전할 수 있는 모험' }[state.tab];
   $('#quest-list-panel').setAttribute('aria-labelledby', `tab-${state.tab}`);
-  const view = getQuestView(state.quests, state);
+  const view = getQuestView(state.quests, state, now);
   const filtered = view.quests;
   $('#quest-filter').value = state.priorityFilter;
   $('#quest-list-controls').hidden = !view.controlsVisible;
@@ -138,25 +142,49 @@ function renderQuestFlags(quest) {
   const flags = [];
   if (quest.important) flags.push(`<span class="quest-flag quest-flag-important" role="img" aria-label="중요" title="중요한 퀘스트">${icon('star')}</span>`);
   if (quest.urgent) flags.push(`<span class="quest-flag quest-flag-urgent" role="img" aria-label="긴급" title="긴급한 퀘스트">${icon('bolt')}</span>`);
+  if (quest.timeLimit) flags.push(`<span class="quest-flag quest-flag-limited" role="img" aria-label="기간 한정" title="기간 한정 퀘스트">${icon('limit')}</span>`);
   return flags.length ? `<span class="quest-flags">${flags.join('')}</span>` : '';
 }
 
+function scheduleDeadlineRefresh(now = new Date()) {
+  clearTimeout(deadlineTimer);
+  const boundaries = state.quests.filter(q => ['active', 'recurring'].includes(q.status) && q.timeLimit?.expiresAt).flatMap(q => {
+    const end = Date.parse(q.timeLimit.expiresAt);
+    return [end, end - 48 * 60 * 60 * 1000];
+  }).filter(time => time > now.getTime());
+  if (boundaries.length) deadlineTimer = setTimeout(() => { if (state.ready) render(); }, Math.min(Math.min(...boundaries) - now.getTime() + 30, 2147483647));
+}
+
+function deadlineLabel(q) {
+  if (!q.timeLimit?.expiresAt) return '시작할 때 만료 시간이 정해져요';
+  const date = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(q.timeLimit.expiresAt));
+  return `${date} ${questStatus(q) === 'expired' ? '만료' : '까지'}`;
+}
+
+function renderDeadline(q) {
+  if (!q.timeLimit) return '';
+  const expired = questStatus(q) === 'expired';
+  return `<div class="deadline-notice${expired ? ' is-expired' : ''}">${icon('limit')}<div><strong>${expired ? '기간이 만료된 퀘스트예요' : '기간 한정 퀘스트'}</strong><p>${escape(deadlineLabel(q))}</p>${expired ? '<p>만료 일시를 바꿔 다시 도전할 수 있어요.</p>' : canClaim(q) ? '<p>제때 해냈어요. 보상은 나중에 기록해도 괜찮아요.</p>' : ''}</div></div>`;
+}
+
 function renderCard(q) {
+  const status = questStatus(q);
   if (q.status === 'recurring') return renderRecurringCard(q);
   const p = progress(q);
   const ready = canClaim(q);
-  const caption = q.status === 'draft' ? '이야기를 쓰고 있어요' : q.status === 'completed' ? '나에게 선물을 건넸어요' : ready ? '보상을 받을 수 있어요' : q.tasks.length ? `${p.done} / ${p.total} 발걸음 완료` : '완료를 기다리는 퀘스트예요';
-  return `<button class="quest-card${state.selectedId === q.id ? ' selected' : ''}" data-quest="${escape(q.id)}" aria-pressed="${state.selectedId === q.id}"><div class="card-meta">${icon(categoryIcons[q.category])}${escape(q.category)} 퀘스트${q.isExample ? '<span class="sample-badge">예시</span>' : ''}</div><h3 class="quest-card-title">${renderQuestFlags(q)}<span class="quest-card-title-text">${escape(q.title || '이름을 기다리는 퀘스트')}</span></h3><div class="card-progress"><div class="progress-track"><span style="width:${p.percent}%"></span></div><span>${p.percent}%</span></div><div class="card-bottom${ready ? ' ready' : q.status === 'completed' ? ' complete' : ''}">${icon(q.status === 'draft' ? 'edit' : ready ? 'gift' : q.status === 'completed' ? 'check' : 'leaf')}${caption}</div></button>`;
+  const caption = status === 'expired' ? '기간이 만료되었어요' : status === 'draft' ? '이야기를 쓰고 있어요' : status === 'completed' ? '나에게 선물을 건넸어요' : ready ? '보상을 받을 수 있어요' : q.tasks.length ? `${p.done} / ${p.total} 발걸음 완료` : '완료를 기다리는 퀘스트예요';
+  return `<button class="quest-card${state.selectedId === q.id ? ' selected' : ''}" data-quest="${escape(q.id)}" aria-pressed="${state.selectedId === q.id}"><div class="card-meta">${icon(categoryIcons[q.category])}${escape(q.category)} 퀘스트${q.isExample ? '<span class="sample-badge">예시</span>' : ''}</div><h3 class="quest-card-title">${renderQuestFlags(q)}<span class="quest-card-title-text">${escape(q.title || '이름을 기다리는 퀘스트')}</span></h3>${q.timeLimit ? `<p class="card-deadline">${escape(deadlineLabel(q))}</p>` : ''}<div class="card-progress"><div class="progress-track"><span style="width:${p.percent}%"></span></div><span>${p.percent}%</span></div><div class="card-bottom${ready ? ' ready' : status === 'completed' ? ' complete' : ''}">${icon(status === 'draft' ? 'edit' : ready ? 'gift' : status === 'completed' ? 'check' : 'leaf')}${caption}</div></button>`;
 }
 
 function renderEmptyList() {
   if (state.tab === 'active' && state.priorityFilter !== 'all') return `<div class="empty-state">${icon('search')}<h3>조건에 맞는 퀘스트가 없어요</h3><p>검색어나 중요·긴급 필터를 바꿔보세요.</p><button class="text-button" data-action="clear-filters">${state.query.trim() ? '필터·검색 초기화' : '전체 퀘스트 보기'}</button></div>`;
   if (state.query.trim()) return `<div class="empty-state">${icon('search')}<h3>아직 찾지 못했어요</h3><p>다른 단어로 퀘스트를 찾아보세요.</p><button class="text-button" data-action="clear-search">검색 지우기</button></div>`;
-  const copy = { draft: ['아직 빈 페이지예요', '새 퀘스트를 쓰다가 잠시 쉬어가도 괜찮아요.'], active: ['새 모험을 시작해볼까요?', '오늘 해보고 싶은 아주 작은 일부터 적어보세요.'], completed: ['선물을 기다리는 페이지', '퀘스트를 마치고 보상을 기록하면 여기에 모여요.'], recurring: ['작은 습관을 모험으로', '새 퀘스트에서 반복퀘스트를 선택하고, 나만의 요일을 정해보세요.'] }[state.tab];
+  const copy = { draft: ['아직 빈 페이지예요', '새 퀘스트를 쓰다가 잠시 쉬어가도 괜찮아요.'], active: ['새 모험을 시작해볼까요?', '오늘 해보고 싶은 아주 작은 일부터 적어보세요.'], completed: ['선물을 기다리는 페이지', '퀘스트를 마치고 보상을 기록하면 여기에 모여요.'], expired: ['다시 도전할 모험을 기다려요', '기간 안에 마치지 못한 퀘스트는 여기에 모여요.'], recurring: ['작은 습관을 모험으로', '새 퀘스트에서 반복퀘스트를 선택하고, 나만의 요일을 정해보세요.'] }[state.tab];
   return `<div class="empty-state">${icon(state.tab === 'completed' ? 'gift' : 'book')}<h3>${copy[0]}</h3><p>${copy[1]}</p><button class="button button-outline button-small" data-action="new">${icon('plus')}퀘스트 만들기</button></div>`;
 }
 
 function renderDetail(q) {
+  const status = questStatus(q);
   if (q.status === 'recurring') return renderRecurringDetail(q);
   const p = progress(q), ready = canClaim(q), solo = !q.tasks.length;
   const record = q.rewardRecord;
@@ -165,17 +193,17 @@ function renderDetail(q) {
   const tasks = q.tasks.map(task => {
     const unlocked = isUnlocked(q, task.id), chain = task.kind === 'chain';
     if (chain) chainIndex++;
-    const disabled = q.status !== 'active' || !unlocked;
+    const disabled = status !== 'active' || !unlocked;
     const inputId = `task-${q.id}-${task.id}`;
     return `<label class="task-item${task.done ? ' done' : ''}${!unlocked ? ' locked' : ''}" for="${escape(inputId)}"><input id="${escape(inputId)}" type="checkbox" data-task="${escape(task.id)}" data-parent="${escape(q.id)}" ${task.done ? 'checked' : ''} ${disabled ? 'disabled' : ''} ${!unlocked ? 'title="앞선 연계 퀘스트를 먼저 완료해주세요"' : ''}><span class="task-text"><span class="task-kind">${icon(chain ? 'chain' : 'leaf')}${chain ? `연계 퀘스트 ${String(chainIndex).padStart(2, '0')}${!unlocked ? ' · 앞선 연계 퀘스트 완료 후 진행' : ''}` : '하위 퀘스트 · 자유롭게'}</span>${escape(task.title || '아직 작성하지 않은 발걸음')}</span>${!unlocked ? icon('lock').replace('class="icon"', 'class="icon task-status-icon"') : task.done ? icon('check').replace('class="icon"', 'class="icon task-status-icon"') : ''}</label>`;
   }).join('');
   const goalInputId = `goal-${q.id}`;
-  const checklist = solo ? `<label class="task-item${q.goalDone ? ' done' : ''}" for="${escape(goalInputId)}"><input id="${escape(goalInputId)}" type="checkbox" data-goal="${escape(q.id)}" ${q.goalDone ? 'checked' : ''} ${q.status !== 'active' ? 'disabled' : ''}><span class="task-text"><span class="task-kind">${icon('check')}퀘스트 완료</span>${escape(q.title || '이름을 기다리는 퀘스트')}</span>${q.goalDone ? icon('check').replace('class="icon"', 'class="icon task-status-icon"') : ''}</label>` : tasks;
-  const progressCaption = solo ? (q.goalDone ? '퀘스트를 해냈어요' : q.status === 'draft' ? '시작을 기다리고 있어요' : '할 일을 마친 뒤 완료를 체크해주세요') : `${p.done} / ${p.total} 발걸음 완료`;
-  const checklistHint = q.status === 'draft' ? '시작한 뒤 체크할 수 있어요' : q.status === 'completed' ? '퀘스트를 마쳤어요' : solo ? '해냈다면 체크해주세요' : '한 가지씩, 나의 속도로';
+  const checklist = solo ? `<label class="task-item${q.goalDone ? ' done' : ''}" for="${escape(goalInputId)}"><input id="${escape(goalInputId)}" type="checkbox" data-goal="${escape(q.id)}" ${q.goalDone ? 'checked' : ''} ${status !== 'active' ? 'disabled' : ''}><span class="task-text"><span class="task-kind">${icon('check')}퀘스트 완료</span>${escape(q.title || '이름을 기다리는 퀘스트')}</span>${q.goalDone ? icon('check').replace('class="icon"', 'class="icon task-status-icon"') : ''}</label>` : tasks;
+  const progressCaption = solo ? (q.goalDone ? '퀘스트를 해냈어요' : status === 'draft' ? '시작을 기다리고 있어요' : '할 일을 마친 뒤 완료를 체크해주세요') : `${p.done} / ${p.total} 발걸음 완료`;
+  const checklistHint = status === 'draft' ? '시작한 뒤 체크할 수 있어요' : status === 'completed' ? '퀘스트를 마쳤어요' : status === 'expired' ? '기간이 만료되었어요' : solo ? '해냈다면 체크해주세요' : '한 가지씩, 나의 속도로';
   const rewardHint = ready ? `${solo ? '퀘스트를 해냈어요.' : '모든 발걸음을 마쳤어요.'} 이제 보상을 받고 기록해주세요.` : solo ? '퀘스트 완료를 체크하면 보상을 받을 수 있어요.' : '모든 발걸음을 마치면 보상을 받을 수 있어요.';
   const created = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(record?.claimedAt || q.createdAt));
-  return `<button class="back-to-list" data-action="back">${icon('arrow')}퀘스트 목록으로</button><div class="detail-topline"><span class="detail-category">${icon(categoryIcons[q.category])}${escape(q.category)} 퀘스트 <span>· ${q.status === 'draft' ? '작성 중' : q.status === 'completed' ? '모험 완료' : ready ? '보상 대기' : '모험 중'}</span></span><div class="detail-actions">${q.status !== 'completed' ? `<button class="icon-button" data-action="edit" aria-label="퀘스트 편집" title="퀘스트 편집">${icon('edit')}</button>` : ''}<button class="icon-button" data-action="delete" aria-label="퀘스트 삭제" title="퀘스트 삭제">${icon('trash')}</button></div></div><h2 class="detail-title" id="detail-title" tabindex="-1">${escape(q.title || '이름을 기다리는 퀘스트')}</h2><p class="detail-description">${escape(q.description || (q.status === 'draft' ? '아직 쓰고 있는 이야기예요. 편집을 이어서 하고 모험을 시작해보세요.' : '아주 작은 발걸음도 소중한 모험이에요.'))}</p><div class="detail-progress"><div class="detail-progress-label"><span>나의 모험 진행도</span><strong>${p.percent}<span style="font-size:10px"> %</span></strong></div><div class="progress-track" role="progressbar" aria-label="퀘스트 진행도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p.percent}"><span style="width:${p.percent}%"></span></div><p class="detail-progress-caption">${progressCaption}</p></div><h3 class="section-label">${icon('book')}${solo ? '퀘스트 완료 체크' : '작은 발걸음'}<span>${checklistHint}</span></h3><div class="task-list">${checklist}</div><div class="reward-box"><div class="reward-label">${icon('gift')}${record ? '내가 나에게 건넨 선물' : '이 모험 끝에 기다리는 선물'}</div><h3 class="reward-name">${escape(q.reward || '어떤 선물을 받고 싶나요?')}</h3><p class="reward-hint">${record ? `${created} · 보상을 받은 순간을 기록했어요` : rewardHint}</p>${record?.note ? `<p class="reward-note">${escape(record.note)}</p>` : ''}${detailPhotoUrl ? `<img class="reward-photo" src="${detailPhotoUrl}" alt="내가 받은 보상 사진">` : ''}</div><div class="detail-footer"><span class="detail-date">${record ? '모험을 마친 날' : '모험을 적은 날'} ${created}</span>${q.status === 'draft' ? `<button class="button button-green" data-action="edit">${icon('edit')}이어서 작성하기</button>` : q.status === 'completed' ? '<span class="field-hint">✧ 잘해냈어요, 나의 모험가님.</span>' : `<button class="button ${ready ? 'button-gold' : 'button-outline'}" data-action="claim" ${ready ? '' : 'disabled'}>${icon(ready ? 'gift' : 'lock')}${ready ? '나에게 보상 주기' : '모험을 마치면 보상 받기'}</button>`}</div>${q.isExample ? `<p class="example-notice">${icon('spark')}사용법을 익히기 위한 예시예요. 설정에서 정리할 수 있어요.</p>` : ''}`;
+  return `<button class="back-to-list" data-action="back">${icon('arrow')}퀘스트 목록으로</button><div class="detail-topline"><span class="detail-category">${icon(categoryIcons[q.category])}${escape(q.category)} 퀘스트 <span>· ${status === 'expired' ? '기간 만료' : status === 'draft' ? '작성 중' : status === 'completed' ? '모험 완료' : ready ? '보상 대기' : '모험 중'}</span></span><div class="detail-actions">${status !== 'completed' ? `<button class="icon-button" data-action="edit" aria-label="퀘스트 편집" title="퀘스트 편집">${icon('edit')}</button>` : ''}<button class="icon-button" data-action="delete" aria-label="퀘스트 삭제" title="퀘스트 삭제">${icon('trash')}</button></div></div><h2 class="detail-title" id="detail-title" tabindex="-1">${escape(q.title || '이름을 기다리는 퀘스트')}</h2><p class="detail-description">${escape(q.description || (status === 'draft' ? '아직 쓰고 있는 이야기예요. 편집을 이어서 하고 모험을 시작해보세요.' : '아주 작은 발걸음도 소중한 모험이에요.'))}</p>${renderDeadline(q)}<div class="detail-progress"><div class="detail-progress-label"><span>나의 모험 진행도</span><strong>${p.percent}<span style="font-size:10px"> %</span></strong></div><div class="progress-track" role="progressbar" aria-label="퀘스트 진행도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p.percent}"><span style="width:${p.percent}%"></span></div><p class="detail-progress-caption">${progressCaption}</p></div><h3 class="section-label">${icon('book')}${solo ? '퀘스트 완료 체크' : '작은 발걸음'}<span>${checklistHint}</span></h3><div class="task-list">${checklist}</div><div class="reward-box"><div class="reward-label">${icon('gift')}${record ? '내가 나에게 건넨 선물' : '이 모험 끝에 기다리는 선물'}</div><h3 class="reward-name">${escape(q.reward || '어떤 선물을 받고 싶나요?')}</h3><p class="reward-hint">${record ? `${created} · 보상을 받은 순간을 기록했어요` : rewardHint}</p>${record?.note ? `<p class="reward-note">${escape(record.note)}</p>` : ''}${detailPhotoUrl ? `<img class="reward-photo" src="${detailPhotoUrl}" alt="내가 받은 보상 사진">` : ''}</div><div class="detail-footer"><span class="detail-date">${record ? '모험을 마친 날' : '모험을 적은 날'} ${created}</span>${status === 'expired' ? `<button class="button button-green" data-action="edit">${icon('repeat')}수정하고 다시 도전하기</button>` : status === 'draft' ? `<button class="button button-green" data-action="edit">${icon('edit')}이어서 작성하기</button>` : status === 'completed' ? '<span class="field-hint">✧ 잘해냈어요, 나의 모험가님.</span>' : `<button class="button ${ready ? 'button-gold' : 'button-outline'}" data-action="claim" ${ready ? '' : 'disabled'}>${icon(ready ? 'gift' : 'lock')}${ready ? '나에게 보상 주기' : '모험을 마치면 보상 받기'}</button>`}</div>${q.isExample ? `<p class="example-notice">${icon('spark')}사용법을 익히기 위한 예시예요. 설정에서 정리할 수 있어요.</p>` : ''}`;
 }
 
 function switchTab(tab) {
@@ -188,21 +216,22 @@ function switchTab(tab) {
 
 function renderRecurringCard(q) {
   const counts = recurrenceCounts(q), today = occurrenceState(q);
-  const caption = today.outcome === 'success' ? '오늘은 성공했어요' : today.outcome === 'failure' ? '오늘은 실패를 기록했어요' : today.scheduled ? '오늘의 기록을 기다려요' : '오늘은 쉬어가는 날이에요';
-  return `<button class="quest-card${state.selectedId === q.id ? ' selected' : ''}" data-quest="${escape(q.id)}" aria-pressed="${state.selectedId === q.id}"><div class="card-meta">${icon('repeat')}반복퀘스트 · ${escape(q.category)}</div><h3 class="quest-card-title">${renderQuestFlags(q)}<span class="quest-card-title-text">${escape(q.title)}</span></h3><p class="recurring-card-days">${recurrenceLabel(q.recurrence)}</p><div class="recurring-card-counts"><span>성공 <strong>${counts.success}</strong>회</span><span>실패 <strong>${counts.failure}</strong>회</span></div><div class="card-bottom${today.outcome === 'success' ? ' complete' : ''}">${icon(today.outcome === 'success' ? 'check' : 'repeat')}${caption}</div></button>`;
+  const caption = questStatus(q) === 'expired' ? '반복 기간이 끝났어요' : today.outcome === 'success' ? '오늘은 성공했어요' : today.outcome === 'failure' ? '오늘은 실패를 기록했어요' : today.scheduled ? '오늘의 기록을 기다려요' : '오늘은 쉬어가는 날이에요';
+  return `<button class="quest-card${state.selectedId === q.id ? ' selected' : ''}" data-quest="${escape(q.id)}" aria-pressed="${state.selectedId === q.id}"><div class="card-meta">${icon('repeat')}반복퀘스트 · ${escape(q.category)}</div><h3 class="quest-card-title">${renderQuestFlags(q)}<span class="quest-card-title-text">${escape(q.title)}</span></h3>${q.timeLimit ? `<p class="card-deadline">${escape(deadlineLabel(q))}</p>` : ''}<p class="recurring-card-days">${recurrenceLabel(q.recurrence)}</p><div class="recurring-card-counts"><span>성공 <strong>${counts.success}</strong>회</span><span>실패 <strong>${counts.failure}</strong>회</span></div><div class="card-bottom${today.outcome === 'success' ? ' complete' : ''}">${icon(today.outcome === 'success' ? 'check' : 'repeat')}${caption}</div></button>`;
 }
 
 function renderRecurringDetail(q) {
+  const expired = questStatus(q) === 'expired';
   const counts = recurrenceCounts(q), date = state.occurrenceDate;
   const occurrence = occurrenceState(q, date), today = localDateKey();
   const dateLabel = `${date.replaceAll('-', '. ')}. (${WEEKDAYS[calendarDate(date).getUTCDay()]})`;
   const status = occurrence.outcome === 'success' ? '성공으로 기록했어요' : occurrence.outcome === 'failure' ? '실패로 기록했어요' : '아직 기록하지 않았어요';
   const history = [...q.recurrence.history].reverse().slice(0, 7);
-  const hint = occurrence.available ? '다른 결과를 누르면 수정하고, 같은 결과를 다시 누르면 취소해요.' : '시작한 날부터 오늘까지, 반복하는 요일을 선택해주세요.';
+  const hint = expired ? '반복 기간이 끝났어요. 기한을 수정하고 다시 시작하면 기록을 이어갈 수 있어요.' : occurrence.available ? '다른 결과를 누르면 수정하고, 같은 결과를 다시 누르면 취소해요.' : '시작한 날부터 오늘까지, 반복하는 요일을 선택해주세요.';
   return `<button class="back-to-list" data-action="back">${icon('arrow')}퀘스트 목록으로</button>
     <div class="detail-topline"><span class="detail-category">${icon('repeat')}${escape(q.category)} 퀘스트 · 매주 이어가기</span><div class="detail-actions"><button class="icon-button" data-action="edit" aria-label="퀘스트 편집">${icon('edit')}</button><button class="icon-button" data-action="delete" aria-label="퀘스트 삭제">${icon('trash')}</button></div></div>
     <h2 class="detail-title" id="detail-title" tabindex="-1">${escape(q.title)}</h2><p class="detail-description">${escape(q.description || '작은 반복이 모여, 나다운 하루를 만들어요.')}</p>
-    <div class="recurring-schedule">${icon('repeat')}<span>${recurrenceLabel(q.recurrence)}</span></div>
+    ${renderDeadline(q)}<div class="recurring-schedule">${icon('repeat')}<span>${recurrenceLabel(q.recurrence)}</span></div>
     <dl class="recurring-totals"><div><dt>성공</dt><dd>${counts.success}<small>회</small></dd></div><div><dt>실패</dt><dd>${counts.failure}<small>회</small></dd></div></dl>
     <section class="occurrence-panel" aria-labelledby="occurrence-heading"><h3 id="occurrence-heading">이번 모험의 기록</h3><label class="occurrence-date" for="occurrence-date">기록할 날짜<input id="occurrence-date" type="date" value="${date}" min="${localDateKey(new Date(q.createdAt))}" max="${today}"></label>
       <p class="occurrence-status">${dateLabel} · ${status}</p>
@@ -211,13 +240,13 @@ function renderRecurringDetail(q) {
     </section>
     ${q.tasks.length ? `<h3 class="section-label recurring-steps">${icon('leaf')}매번 해볼 작은 발걸음</h3><ol class="recurring-task-list">${q.tasks.map(task => `<li>${escape(task.title)}</li>`).join('')}</ol>` : ''}
     <div class="reward-box"><div class="reward-label">${icon('gift')}성공한 날, 나에게 약속한 선물</div><h3 class="reward-name">${escape(q.reward)}</h3></div>
-    <section class="recurring-history" aria-labelledby="history-heading"><h3 id="history-heading" class="section-label">${icon('book')}최근 기록 <span>최근 7회 · 날짜를 눌러 수정</span></h3>${history.length ? `<ul>${history.map(record => `<li><button data-record-date="${record.date}" aria-label="${record.date} 기록 수정"><time datetime="${record.date}">${record.date.replaceAll('-', '. ')}.</time><span class="history-${record.outcome}">${record.outcome === 'success' ? '성공' : '실패'}</span></button></li>`).join('')}</ul>` : '<p class="field-hint">첫 번째 기록을 기다리고 있어요.</p>'}</section>`;
+    <section class="recurring-history" aria-labelledby="history-heading"><h3 id="history-heading" class="section-label">${icon('book')}최근 기록 <span>${expired ? '최근 7회 · 날짜를 눌러 조회' : '최근 7회 · 날짜를 눌러 수정'}</span></h3>${history.length ? `<ul>${history.map(record => `<li><button data-record-date="${record.date}" aria-label="${record.date} 기록 수정"><time datetime="${record.date}">${record.date.replaceAll('-', '. ')}.</time><span class="history-${record.outcome}">${record.outcome === 'success' ? '성공' : '실패'}</span></button></li>`).join('')}</ul>` : '<p class="field-hint">첫 번째 기록을 기다리고 있어요.</p>'}</section>${expired ? `<div class="detail-footer"><span class="field-hint">지금까지의 기록은 그대로 남아요.</span><button class="button button-green" data-action="edit">${icon('repeat')}수정하고 다시 도전하기</button></div>` : ''}`;
 }
 
 function renderRepeatEditor() {
   const repeating = $('#edit-recurring').checked;
+  $('#repeat-settings').hidden = !repeating;
   $('#repeat-days').disabled = !repeating;
-  $('#repeat-options').classList.toggle('is-disabled', !repeating);
   const days = [...document.querySelectorAll('[name="repeat-day"]:checked')].map(input => Number(input.value));
   $('#repeat-summary').textContent = repeating ? recurrenceLabel({ days }) : '반복퀘스트를 선택하면 요일을 정할 수 있어요.';
   $('#start-quest-label').textContent = repeating ? '반복퀘스트 시작하기' : '퀘스트 시작하기';
@@ -226,16 +255,114 @@ function renderRepeatEditor() {
 }
 
 function renderEditorTasks() {
-  $('#edit-tasks').innerHTML = editorTasks.map((task, index) => `<div class="edit-task" data-row="${escape(task.id)}"><span class="task-number">${String(index + 1).padStart(2, '0')}</span><select aria-label="${index + 1}번째 발걸음 종류"><option value="free"${task.kind === 'free' ? ' selected' : ''}>하위</option><option value="chain"${task.kind === 'chain' ? ' selected' : ''}>연계</option></select><input type="text" maxlength="160" value="${escape(task.title)}" aria-label="${index + 1}번째 발걸음 내용" placeholder="작고 구체적인 할 일을 적어보세요"><button type="button" class="icon-button" data-move-task="${escape(task.id)}" aria-label="${index + 1}번째 발걸음 위로 이동" ${index ? '' : 'disabled'}><svg class="icon" style="transform:rotate(-90deg)" aria-hidden="true"><use href="#i-arrow"/></svg></button><button type="button" class="icon-button" data-remove-task="${escape(task.id)}" aria-label="${index + 1}번째 발걸음 삭제">${icon('close')}</button></div>`).join('');
+  $('#edit-tasks').innerHTML = editorTasks.map((task, index) => `<div class="edit-task" data-row="${escape(task.id)}"><button type="button" class="icon-button task-drag-handle" data-drag-task="${escape(task.id)}" aria-label="${index + 1}번째 발걸음 드래그하여 순서 변경" title="드래그하여 순서 변경">${icon('grip')}</button><span class="task-number">${String(index + 1).padStart(2, '0')}</span><select aria-label="${index + 1}번째 발걸음 종류"><option value="free"${task.kind === 'free' ? ' selected' : ''}>하위</option><option value="chain"${task.kind === 'chain' ? ' selected' : ''}>연계</option></select><textarea maxlength="160" rows="1" aria-label="${index + 1}번째 발걸음 내용" placeholder="작고 구체적인 할 일을 적어보세요">${escape(task.title)}</textarea><div class="task-reorder-buttons"><button type="button" class="icon-button" data-move-task="${escape(task.id)}" data-direction="-1" aria-label="${index + 1}번째 발걸음 위로 이동" ${index ? '' : 'disabled'}>${icon('chevron-up')}</button><button type="button" class="icon-button" data-move-task="${escape(task.id)}" data-direction="1" aria-label="${index + 1}번째 발걸음 아래로 이동" ${index < editorTasks.length - 1 ? '' : 'disabled'}>${icon('chevron-down')}</button></div><button type="button" class="icon-button" data-remove-task="${escape(task.id)}" aria-label="${index + 1}번째 발걸음 삭제">${icon('close')}</button></div>`).join('');
   document.querySelectorAll('[data-add-task]').forEach(button => { button.disabled = editorTasks.length >= 100; });
 }
 
 function readEditorTasks() {
   editorTasks = [...$('#edit-tasks').children].map(row => {
     const previous = editorTasks.find(task => task.id === row.dataset.row);
-    return { id: row.dataset.row, title: row.querySelector('input').value, kind: row.querySelector('select').value, done: previous?.done || false };
+    return { id: row.dataset.row, title: row.querySelector('textarea').value, kind: row.querySelector('select').value, done: previous?.done || false };
   });
   editorTasks = normalizeTasks(editorTasks);
+}
+
+function moveEditorTask(id, index) {
+  editorTasks = reorderTasks(editorTasks, id, index);
+  renderEditorTasks(); scheduleDraft();
+  [...$('#edit-tasks').children].find(row => row.dataset.row === id)?.querySelector('textarea').focus({ preventScroll: true });
+  $('#task-order-status').textContent = `${index + 1}번째 발걸음으로 옮겼어요.`;
+}
+
+function readTimeLimit(original) {
+  if (!$('#edit-limited').checked) return null;
+  const mode = $('#edit-limit-mode').value;
+  if (mode === 'fixed') return { mode, expiresAt: parseClockFields({ date: $('#edit-expiry-date').value,
+    hour: $('#edit-expiry-hour').value, minute: $('#edit-expiry-minute').value, period: $('#edit-expiry-period').value }), minutes: null };
+  const minutes = parseDurationFields({ days: $('#edit-limit-days').value, hours: $('#edit-limit-hours').value, minutes: $('#edit-limit-minutes').value });
+  return { mode, minutes, expiresAt: original.timeLimit?.mode === mode && original.timeLimit.minutes === minutes ? original.timeLimit.expiresAt : null };
+}
+
+function renderTimeLimitEditor() {
+  const enabled = $('#edit-limited').checked;
+  $('#time-limit-settings').hidden = !enabled;
+  $('#time-limit-fields').disabled = !enabled;
+  const duration = $('#edit-limit-mode').value === 'duration';
+  $('#limit-fixed-field').hidden = duration;
+  $('#limit-duration-fields').hidden = !duration;
+  closeTimePickers();
+}
+
+function closeTimePickers(except = null) {
+  document.querySelectorAll('.time-combobox').forEach(box => {
+    if (box === except) return;
+    box.querySelector('.time-options').hidden = true;
+    box.querySelector('input').setAttribute('aria-expanded', 'false');
+    box.querySelector('input').removeAttribute('aria-activedescendant');
+    box.querySelector('button').setAttribute('aria-expanded', 'false');
+  });
+}
+
+function highlightTimeOption(box, index) {
+  const options = [...box.querySelectorAll('[data-time-value]')];
+  const selected = (index + options.length) % options.length;
+  options.forEach((option, i) => { option.classList.toggle('is-active', i === selected); option.setAttribute('aria-selected', String(i === selected)); });
+  box.dataset.activeIndex = selected;
+  box.querySelector('input').setAttribute('aria-activedescendant', options[selected].id);
+  options[selected].scrollIntoView({ block: 'nearest' });
+}
+
+function openTimePicker(box) {
+  closeTimePickers(box);
+  const input = box.querySelector('input');
+  box.querySelector('.time-options').hidden = false;
+  input.setAttribute('aria-expanded', 'true');
+  box.querySelector('button').setAttribute('aria-expanded', 'true');
+  const value = box.dataset.clock === 'period' ? ({ am: '오전', pm: '오후' }[input.value.toLowerCase()] || input.value) : input.value.padStart(2, '0');
+  const index = [...box.querySelectorAll('[data-time-value]')].findIndex(option => option.dataset.timeValue === value);
+  highlightTimeOption(box, Math.max(0, index));
+}
+
+function selectTimeOption(box, value) {
+  const input = box.querySelector('input');
+  input.value = value; closeTimePickers(); input.focus({ preventScroll: true });
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function initTimePickers() {
+  document.querySelectorAll('.time-combobox').forEach(box => {
+    const type = box.dataset.clock, input = box.querySelector('input'), list = box.querySelector('.time-options');
+    const values = type === 'period' ? ['오전', '오후'] : Array.from({ length: type === 'hour' ? 12 : 60 }, (_, i) => String(type === 'hour' ? i + 1 : i).padStart(2, '0'));
+    list.innerHTML = values.map((value, i) => `<button type="button" role="option" tabindex="-1" id="expiry-${type}-option-${i}" data-time-value="${value}" aria-selected="false">${value}${type === 'hour' ? '시' : type === 'minute' ? '분' : ''}</button>`).join('');
+    box.addEventListener('click', event => {
+      const option = event.target.closest('[data-time-value]');
+      if (option) { selectTimeOption(box, option.dataset.timeValue); return; }
+      if (event.target.closest('[data-time-toggle]')) {
+        const opening = list.hidden;
+        input.focus({ preventScroll: true });
+        if (opening) openTimePicker(box); else closeTimePickers();
+      }
+    });
+    input.addEventListener('keydown', event => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+        event.preventDefault();
+        if (list.hidden) openTimePicker(box);
+        else highlightTimeOption(box, Number(box.dataset.activeIndex) + (event.key === 'ArrowDown' ? 1 : -1));
+      } else if (!list.hidden && ['Home', 'End'].includes(event.key)) {
+        event.preventDefault(); highlightTimeOption(box, event.key === 'Home' ? 0 : values.length - 1);
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        if (!list.hidden) selectTimeOption(box, values[Number(box.dataset.activeIndex)]);
+        else { input.blur(); scheduleDraft(); }
+      } else if (event.key === 'Escape' && !list.hidden) {
+        event.preventDefault(); event.stopPropagation(); closeTimePickers();
+      }
+    });
+    input.addEventListener('input', () => { if (!list.hidden) closeTimePickers(); });
+    box.addEventListener('focusout', event => { if (!box.contains(event.relatedTarget)) closeTimePickers(); });
+  });
+  document.addEventListener('pointerdown', event => { if (!event.target.closest('.time-combobox')) closeTimePickers(); });
 }
 
 function readDraft() {
@@ -245,6 +372,7 @@ function readDraft() {
   return { ...original, title: $('#edit-title').value, description: $('#edit-description').value,
     category: $('#edit-category').value, reward: $('#edit-reward').value,
     important: $('#edit-important').checked, urgent: $('#edit-urgent').checked,
+    timeLimit: readTimeLimit(original),
     recurrence: $('#edit-recurring').checked ? { days: [...document.querySelectorAll('[name="repeat-day"]:checked')].map(input => Number(input.value)), history: original.recurrence?.history || [] } : null,
     tasks: structuredClone(editorTasks), goalDone: !editorTasks.length && original.goalDone === true, status: 'draft', isExample: false,
     updatedAt: new Date().toISOString(), rewardRecord: null };
@@ -253,9 +381,9 @@ function readDraft() {
 async function saveDraft() {
   clearTimeout(draftTimer);
   if (!state.editorId) return;
-  const draft = readDraft();
   $('#autosave-status').textContent = '일지를 저장하고 있어요…';
   try {
+    const draft = readDraft();
     await updateQuests(quests => replaceQuest(quests, draft));
     $('#autosave-status').textContent = '작성 중인 일지를 저장했어요';
     return draft;
@@ -279,6 +407,8 @@ async function openEditor(id) {
   let quest = state.quests.find(q => q.id === id);
   if (quest?.status === 'completed') { finishEditing(); return; }
   if (!quest) { quest = makeQuest(state.tab === 'recurring' ? { recurrence: { days: [], history: [] } } : {}); state.priorityFilter = 'all'; }
+  const restarting = questStatus(quest) === 'expired';
+  if (restarting && quest.timeLimit.mode === 'duration') quest = { ...quest, timeLimit: { ...quest.timeLimit, expiresAt: null } };
   quest = { ...quest, status: 'draft', rewardRecord: null };
   await updateQuests(quests => replaceQuest(quests, quest), false);
   state.editorId = quest.id; state.selectedId = quest.id; state.tab = 'draft'; state.query = '';
@@ -288,12 +418,21 @@ async function openEditor(id) {
   $('#edit-category').value = quest.category; $('#edit-reward').value = quest.reward;
   $('#edit-important').checked = quest.important === true; $('#edit-urgent').checked = quest.urgent === true;
   $('#edit-recurring').checked = !!quest.recurrence;
+  $('#edit-limited').checked = !!quest.timeLimit;
+  $('#edit-limit-mode').value = quest.timeLimit?.mode || 'fixed';
+  const clock = clockFields(quest.timeLimit?.expiresAt || new Date().toISOString());
+  $('#edit-expiry-date').value = quest.timeLimit?.expiresAt ? clock.date : '';
+  for (const field of ['hour', 'minute', 'period']) $(`#edit-expiry-${field}`).value = clock[field];
+  const duration = durationFields(quest.timeLimit?.minutes);
+  for (const field of ['days', 'hours', 'minutes']) $(`#edit-limit-${field}`).value = duration[field];
   const hasRecords = !!quest.recurrence?.history.length;
   $('#edit-recurring').disabled = hasRecords;
   $('#repeat-type-hint').textContent = hasRecords ? '기록이 있는 퀘스트는 반복 설정을 유지해요. 요일은 바꿀 수 있어요.' : '매주 정해진 요일에 같은 모험을 이어가요.';
   document.querySelectorAll('[name="repeat-day"]').forEach(input => { input.checked = quest.recurrence?.days.includes(Number(input.value)) === true; });
   renderRepeatEditor();
+  renderTimeLimitEditor();
   editorTasks = structuredClone(quest.tasks); renderEditorTasks();
+  clearTaskDrag(); $('#task-order-status').textContent = '';
   $('#editor-error').hidden = true; $('#autosave-status').textContent = '작성 내용은 자동으로 저장돼요';
   render(); $('#editor-dialog').showModal(); $('#edit-title').focus();
 }
@@ -449,14 +588,14 @@ document.addEventListener('click', async event => {
       readEditorTasks();
       if (editorTasks.length >= 100) return;
       editorTasks.push({ id: uid(), title: '', kind: target.dataset.addTask, done: false });
-      renderEditorTasks(); $('#edit-tasks').lastElementChild.querySelector('input').focus(); scheduleDraft(); return;
+      renderEditorTasks(); $('#edit-tasks').lastElementChild.querySelector('textarea').focus(); scheduleDraft(); return;
     }
     if (target.dataset.removeTask || target.dataset.moveTask) {
       readEditorTasks();
       const id = target.dataset.removeTask || target.dataset.moveTask;
       const index = editorTasks.findIndex(task => task.id === id);
       if (target.dataset.removeTask) editorTasks.splice(index, 1);
-      else if (index > 0) [editorTasks[index - 1], editorTasks[index]] = [editorTasks[index], editorTasks[index - 1]];
+      else { moveEditorTask(id, index + Number(target.dataset.direction)); return; }
       editorTasks = normalizeTasks(editorTasks); renderEditorTasks(); scheduleDraft(); return;
     }
     const action = target.dataset.action;
@@ -569,7 +708,55 @@ $('#quest-detail').addEventListener('change', async event => {
 
 $('#quest-form').addEventListener('input', event => {
   if (event.target.id === 'edit-recurring' || event.target.name === 'repeat-day') renderRepeatEditor();
+  if (['edit-recurring', 'edit-limited', 'edit-limit-mode'].includes(event.target.id)) renderTimeLimitEditor();
   scheduleDraft();
+});
+function clearTaskDrag() {
+  taskDrag = null;
+  document.querySelectorAll('.dragging, .drop-before, .drop-after').forEach(row => row.classList.remove('dragging', 'drop-before', 'drop-after'));
+}
+$('#edit-tasks').addEventListener('pointerdown', event => {
+  const handle = event.target.closest('[data-drag-task]');
+  if (!handle || event.button !== 0) return;
+  event.preventDefault();
+  handle.focus({ preventScroll: true });
+  $('#task-order-status').textContent = '발걸음을 잡았어요. 옮길 위치에 놓아주세요.';
+  taskDrag = { id: handle.dataset.dragTask, pointerId: event.pointerId, x: event.clientX, y: event.clientY, active: false, index: null };
+  handle.setPointerCapture(event.pointerId);
+});
+$('#edit-tasks').addEventListener('pointermove', event => {
+  if (!taskDrag || event.pointerId !== taskDrag.pointerId) return;
+  if (!taskDrag.active && Math.hypot(event.clientX - taskDrag.x, event.clientY - taskDrag.y) < 5) return;
+  if (!taskDrag.active) { readEditorTasks(); taskDrag.active = true; }
+  event.preventDefault();
+  document.querySelectorAll('.drop-before, .drop-after').forEach(row => row.classList.remove('drop-before', 'drop-after'));
+  [...$('#edit-tasks').children].find(row => row.dataset.row === taskDrag.id)?.classList.add('dragging');
+  const target = document.elementFromPoint(event.clientX, event.clientY);
+  const row = target?.closest('#edit-tasks [data-row]');
+  taskDrag.index = null;
+  if (row) {
+    const after = event.clientY >= row.getBoundingClientRect().top + row.offsetHeight / 2;
+    let index = editorTasks.findIndex(task => task.id === row.dataset.row) + Number(after);
+    if (index > editorTasks.findIndex(task => task.id === taskDrag.id)) index--;
+    taskDrag.index = index;
+    if (row.dataset.row !== taskDrag.id) row.classList.add(after ? 'drop-after' : 'drop-before');
+  }
+  const dialog = $('#editor-dialog'), bounds = dialog.getBoundingClientRect();
+  if (event.clientY < bounds.top + 55) dialog.scrollBy(0, -18);
+  else if (event.clientY > bounds.bottom - 55) dialog.scrollBy(0, 18);
+});
+$('#edit-tasks').addEventListener('pointerup', event => {
+  if (!taskDrag || event.pointerId !== taskDrag.pointerId) return;
+  const { id, index, active } = taskDrag;
+  clearTaskDrag();
+  if (active && index !== null) moveEditorTask(id, index);
+});
+$('#edit-tasks').addEventListener('pointercancel', clearTaskDrag);
+$('#edit-tasks').addEventListener('lostpointercapture', clearTaskDrag);
+$('#edit-tasks').addEventListener('keydown', event => { if (event.key === 'Escape' && taskDrag) { event.preventDefault(); event.stopPropagation(); clearTaskDrag(); } });
+$('#edit-tasks').addEventListener('keydown', event => {
+  if (event.target.tagName !== 'TEXTAREA' || event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault(); event.target.blur(); saveDraft().catch(() => {});
 });
 $('#edit-tasks').addEventListener('change', event => {
   if (event.target.tagName === 'SELECT') { readEditorTasks(); renderEditorTasks(); scheduleDraft(); }
@@ -766,7 +953,7 @@ async function importGuestQuests() {
 }
 
 setInterval(() => { if (!document.hidden) runSync().catch(() => {}); }, 30000);
-window.addEventListener('focus', () => scheduleSync(0));
+window.addEventListener('focus', () => { if (state.ready) render(); scheduleSync(0); });
 let calendarDay = localDateKey();
 function refreshCalendarDay() {
   const today = localDateKey();
@@ -776,7 +963,7 @@ function refreshCalendarDay() {
   if (state.ready) render();
 }
 setInterval(() => { if (!document.hidden) refreshCalendarDay(); }, 60000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshCalendarDay(); scheduleSync(0); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshCalendarDay(); if (state.ready) render(); scheduleSync(0); } });
 
 function setAuthMode(mode) {
   authMode = mode;
@@ -817,5 +1004,6 @@ $('#auth-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 $('#auth-dialog').addEventListener('close', () => { $('#auth-password').value = ''; });
+initTimePickers();
 initGuides();
 init();

@@ -1,4 +1,5 @@
 import { validateRecurrence } from './recurrence.js';
+import { validateTimeLimit, startTimeLimit, questStatus, questDone, priorityRank } from './time-limit.js';
 
 export const CATEGORIES = ['일상', '공부', '건강', '나를 위한 일'];
 export const STATUSES = ['draft', 'active', 'completed', 'recurring'];
@@ -7,7 +8,7 @@ export const uid = () => crypto.randomUUID();
 export function makeQuest(overrides = {}) {
   const now = new Date().toISOString();
   return { id: uid(), title: '', description: '', category: '일상', status: 'draft',
-    important: false, urgent: false, tasks: [], goalDone: false, reward: '', rewardRecord: null, recurrence: null, createdAt: now, updatedAt: now,
+    important: false, urgent: false, tasks: [], goalDone: false, reward: '', rewardRecord: null, recurrence: null, timeLimit: null, createdAt: now, updatedAt: now,
     isExample: false, ...overrides };
 }
 
@@ -17,9 +18,9 @@ export function progress(quest) {
   return { total, done, percent: total ? Math.round(done / total * 100) : 0 };
 }
 
-export function sortQuests(quests, order = 'newest') {
+export function sortQuests(quests, order = 'newest', now = new Date()) {
   return [...quests].sort((a, b) => {
-    const urgency = Number(b.urgent === true) - Number(a.urgent === true);
+    const urgency = priorityRank(b, now) - priorityRank(a, now);
     if (urgency) return urgency;
     const newest = Date.parse(b.createdAt) - Date.parse(a.createdAt);
     const tie = a.id.localeCompare(b.id);
@@ -65,33 +66,42 @@ export function normalizeTasks(tasks) {
   });
 }
 
-export function toggleTask(quest, taskId) {
-  if (quest.status !== 'active') throw new Error('진행 중인 퀘스트만 체크할 수 있어요.');
+export function reorderTasks(tasks, taskId, targetIndex) {
+  const from = tasks.findIndex(task => task.id === taskId);
+  if (from < 0 || !Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= tasks.length) return normalizeTasks(tasks);
+  const ordered = [...tasks];
+  const [moved] = ordered.splice(from, 1);
+  ordered.splice(targetIndex, 0, moved);
+  return normalizeTasks(ordered);
+}
+
+export function toggleTask(quest, taskId, now = new Date()) {
+  if (questStatus(quest, now) !== 'active') throw new Error('진행 중인 퀘스트만 체크할 수 있어요.');
   if (!isUnlocked(quest, taskId)) throw new Error('앞선 연계 퀘스트를 먼저 마쳐주세요.');
   const tasks = quest.tasks.map(task => task.id === taskId ? { ...task, done: !task.done } : { ...task });
-  return { ...quest, tasks: normalizeTasks(tasks), updatedAt: new Date().toISOString() };
+  return { ...quest, tasks: normalizeTasks(tasks), updatedAt: now.toISOString() };
 }
 
-export function toggleGoal(quest) {
-  if (quest.status !== 'active') throw new Error('진행 중인 퀘스트만 체크할 수 있어요.');
+export function toggleGoal(quest, now = new Date()) {
+  if (questStatus(quest, now) !== 'active') throw new Error('진행 중인 퀘스트만 체크할 수 있어요.');
   if (quest.tasks.length) throw new Error('각 발걸음의 완료 여부를 체크해주세요.');
-  return { ...quest, goalDone: !quest.goalDone, updatedAt: new Date().toISOString() };
+  return { ...quest, goalDone: !quest.goalDone, updatedAt: now.toISOString() };
 }
 
-export function startQuest(quest) {
+export function startQuest(quest, now = new Date()) {
   if (!quest.title.trim()) throw new Error('퀘스트 이름을 적어주세요.');
   if (!quest.reward.trim()) throw new Error('나에게 줄 보상을 적어주세요.');
   const recurrence = validateRecurrence(quest.recurrence);
+  const timeLimit = startTimeLimit(quest.timeLimit, now);
   if (recurrence && !recurrence.days.length) throw new Error('반복할 요일을 하나 이상 선택해주세요.');
   const tasks = normalizeTasks(quest.tasks.filter(task => task.title.trim())
     .map(task => ({ ...task, title: task.title.trim() })));
   return { ...quest, title: quest.title.trim(), reward: quest.reward.trim(),
     tasks, goalDone: !tasks.length && quest.goalDone === true,
-    status: recurrence ? 'recurring' : 'active', recurrence, updatedAt: new Date().toISOString(), rewardRecord: null };
+    status: recurrence ? 'recurring' : 'active', recurrence, timeLimit, updatedAt: now.toISOString(), rewardRecord: null };
 }
 
-export const canClaim = quest => quest.status === 'active' &&
-  (quest.tasks.length ? quest.tasks.every(task => task.done) : quest.goalDone === true);
+export const canClaim = quest => quest.status === 'active' && questDone(quest);
 
 export function claimReward(quest, note, photo = null) {
   if (!canClaim(quest)) throw new Error('퀘스트를 완료한 뒤 보상을 기록할 수 있어요.');
@@ -135,13 +145,14 @@ export function validateQuests(input) {
       category: raw.category, status: raw.status, important: raw.important === true, urgent: raw.urgent === true,
       tasks, goalDone: !tasks.length && raw.goalDone === true, reward: text(raw.reward, 160),
       createdAt: date(raw.createdAt), updatedAt: date(raw.updatedAt), isExample: raw.isExample === true,
-      rewardRecord: null, recurrence: validateRecurrence(raw.recurrence) };
+      rewardRecord: null, recurrence: validateRecurrence(raw.recurrence), timeLimit: validateTimeLimit(raw.timeLimit, raw.status !== 'draft') };
     if ((quest.status === 'recurring' && !quest.recurrence) ||
       (quest.recurrence && !['draft', 'recurring'].includes(quest.status))) throw new Error('반복퀘스트의 상태를 확인해주세요.');
     if (JSON.stringify(normalizeTasks(tasks)) !== JSON.stringify(tasks)) throw new Error('연계 퀘스트의 진행 순서가 올바르지 않아요.');
     if (quest.status !== 'draft') {
       if (tasks.some(task => !task.title.trim())) throw new Error('백업에 비어 있는 발걸음이 있어요.');
-      startQuest(quest);
+      if (!quest.title.trim() || !quest.reward.trim()) throw new Error('퀘스트 이름과 보상을 적어주세요.');
+      if (quest.recurrence && !quest.recurrence.days.length) throw new Error('반복할 요일을 하나 이상 선택해주세요.');
     }
     if (raw.rewardRecord) {
       const record = raw.rewardRecord;

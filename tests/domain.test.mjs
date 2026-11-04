@@ -226,7 +226,7 @@ test('모든 정렬 옵션에서 긴급 그룹을 먼저 보여주고 각 그룹
   ];
   const expected = {
     newest: ['urgent-new', 'urgent-old', 'normal-new', 'normal-old'],
-    oldest: ['urgent-old', 'urgent-new', 'normal-old', 'normal-new'],
+    oldest: ['urgent-old', 'urgent-new', 'normal-new', 'normal-old'],
     progress: ['urgent-new', 'urgent-old', 'normal-new', 'normal-old']
   };
   for (const [order, ids] of Object.entries(expected)) assert.deepEqual(sortQuests(input, order).map(q => q.id), ids);

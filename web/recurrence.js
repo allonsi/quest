@@ -1,3 +1,5 @@
+import { questStatus } from './time-limit.js';
+
 export const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const MAX_RECORDS = 3650;
 
@@ -46,7 +48,7 @@ export function occurrenceState(quest, date = localDateKey(), now = new Date()) 
   const day = calendarDate(date).getUTCDay();
   const record = quest.recurrence?.history.find(item => item.date === date);
   const scheduled = quest.recurrence?.days.includes(day) === true;
-  const available = quest.status === 'recurring' && date <= localDateKey(now) &&
+  const available = questStatus(quest, now) === 'recurring' && date <= localDateKey(now) &&
     date >= localDateKey(new Date(quest.createdAt)) && (scheduled || !!record);
   return { scheduled, outcome: record?.outcome || null, available };
 }

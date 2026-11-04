@@ -23,6 +23,57 @@ dialog{border:1px solid #d2d2be;padding:0;background:var(--white);color:var(--in
 .priority-option-important,.quest-flag-important{color:#9a7b3f}
 .priority-option-urgent,.quest-flag-urgent{color:#ad6852}
 .priority-option-recurring{color:#5d7552}
+.priority-option-limited,.quest-flag-limited{color:#4c7c9b}
+.quest-flag-limited .icon{fill:#e1eef5}
+.time-limit-settings{margin:0 0 24px;padding:17px 18px;border:1px solid #d6e0e3;border-radius:6px;background:#f0f5f5}
+.time-limit-settings fieldset{border:0;margin:0;padding:0;min-width:0}
+.time-limit-settings legend{font-size:12px;color:#567588;margin-bottom:14px}
+.time-limit-settings .field{margin-bottom:14px}
+.time-limit-settings .field-hint{line-height:1.8}
+.field-label{display:inline-flex;align-items:center;gap:4px}
+.limit-mode-field{align-items:flex-start}
+.limit-mode-field select{width:auto;max-width:100%;padding-right:28px}
+.expiry-fixed-fields{max-width:100%}
+.expiry-inputs{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.65fr);gap:12px;align-items:center;width:max(50%,330px);max-width:100%}
+.expiry-inputs .expiry-clock{max-width:none;min-width:0;gap:6px}
+.expiry-inputs .time-combobox[data-clock="period"]{flex:1.4}
+.expiry-inputs .time-input-wrap input{padding-left:6px;padding-right:20px!important}
+.expiry-inputs .time-picker-toggle{width:20px}
+.expiry-inputs .time-options{min-width:64px}
+@media(max-width:420px){.expiry-inputs{gap:8px}.expiry-inputs .expiry-clock{gap:3px}.expiry-inputs .clock-unit{display:none}.expiry-inputs input{font-size:12px;padding:9px 4px}.expiry-inputs .time-input-wrap input{padding-left:4px!important;padding-right:18px!important}.expiry-inputs .time-picker-toggle{width:18px}}
+.duration-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;width:max(50%,240px);max-width:100%}
+.expiry-clock{display:flex;align-items:center;gap:8px;max-width:390px}
+.time-combobox{position:relative;min-width:0;flex:1}
+.time-combobox[data-clock="period"]{flex:1.2}
+.time-input-wrap{position:relative;display:flex;align-items:center}
+.time-input-wrap input{width:100%;padding-right:30px!important}
+.time-picker-toggle{position:absolute;right:1px;top:1px;bottom:1px;width:30px;display:grid;place-items:center;color:#71899a;border-radius:3px}
+.time-picker-toggle:hover{background:#e4edf0}
+.time-picker-toggle .icon{width:13px;height:13px;transform:rotate(90deg)}
+.clock-unit{font-size:11px;color:#7f949d;flex-shrink:0}
+.time-options{position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:180px;overflow-y:auto;overscroll-behavior:contain;padding:4px;border:1px solid #cedce0;border-radius:5px;background:#fffef9;box-shadow:0 5px 16px #344a5620;z-index:5}
+.time-options button{display:block;width:100%;padding:7px 5px;border-radius:3px;text-align:center;font-size:12px;color:#5f7c8d}
+.time-options button:hover,.time-options button.is-active{background:#e6eff1;color:#34566c}
+.time-options button:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+@media(max-width:360px){.expiry-clock{gap:4px}.time-picker-toggle{width:24px}.time-input-wrap input{padding-left:6px!important;padding-right:24px!important}.duration-fields{gap:8px}.duration-fields input{padding-left:8px;padding-right:8px}}
+.card-deadline{font-size:10px;color:#638097;margin:9px 0 0;line-height:1.7}
+.deadline-notice{display:flex;gap:10px;padding:14px 16px;margin:20px 0;border:1px solid #d7e3e7;border-radius:5px;background:#eff5f7;color:#5b7b8c;font-size:11px;line-height:1.9}
+.deadline-notice>.icon{flex-shrink:0;margin-top:3px}
+.deadline-notice p{margin:0}.deadline-notice.is-expired{color:#8d7663;border-color:#e5dbce;background:#f6f1e9}
+.edit-task{position:relative;--task-input-height:32px;padding:9px}
+.edit-task textarea{flex:1;min-width:0;width:0;resize:vertical;height:var(--task-input-height);min-height:var(--task-input-height);border:1px solid #e0e1d4;border-radius:3px;background:#fffef9;padding:6px 8px;color:var(--ink);font:inherit;font-size:12px;line-height:1.4}
+.edit-task textarea:focus{outline:2px solid var(--gold);outline-offset:1px}
+.edit-task .task-drag-handle{cursor:grab;width:22px;flex-shrink:0;color:#8d977e;touch-action:none;user-select:none;-webkit-user-select:none}
+.edit-task .task-drag-handle:active{cursor:grabbing}
+.task-reorder-buttons{display:flex;flex-direction:column;flex-shrink:0}
+.task-reorder-buttons .icon-button{min-height:16px;height:16px;padding:0}
+.edit-task .task-reorder-buttons .icon{width:12px;height:12px;stroke-width:2}
+.edit-task.dragging{opacity:.45}
+.edit-task.drop-before:before,.edit-task.drop-after:after{content:"";position:absolute;left:0;right:0;height:3px;border-radius:3px;background:#658264;pointer-events:none}
+.edit-task.drop-before:before{top:-5px}.edit-task.drop-after:after{bottom:-5px}
+.task-text{white-space:pre-wrap;overflow-wrap:anywhere}.recurring-task-list li{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:1200px){.journal-top{flex-wrap:wrap}.journal-label{display:none}.tabs{overflow-x:auto;max-width:100%;min-height:60px}.tabs button{flex-shrink:0}}
+@media(max-width:720px){.tabs{justify-content:flex-start;min-height:53px}.edit-task{--task-input-height:40px;padding:7px}.edit-task textarea{font-size:16px;padding:6px}.edit-task textarea::placeholder{font-size:11px}.edit-task .task-drag-handle{width:18px}.edit-task .task-number{display:none}.task-reorder-buttons .icon-button{min-height:18px;height:18px}.time-limit-settings{padding:16px 12px}.time-limit-settings input[type="date"]{min-width:0;width:100%}}
 .quest-card-title{display:flex;align-items:flex-start;gap:7px}
 .quest-card-title-text{min-width:0;overflow-wrap:anywhere}
 .quest-flags{display:inline-flex;gap:3px;flex-shrink:0;padding-top:2px}
@@ -47,7 +98,6 @@ dialog{border:1px solid #d2d2be;padding:0;background:var(--white);color:var(--in
 .weekday-option input:checked+span{background:var(--green);border-color:var(--green);color:#fffdf4;box-shadow:0 2px 7px #34492a14}
 .weekday-option input:focus-visible+span{outline:2px solid var(--gold);outline-offset:3px}
 .weekday-option input:disabled+span{cursor:not-allowed}
-.repeat-settings .is-disabled{opacity:.45}
 .recurring-card-days{font-size:10px;color:#929d82;margin:10px 0 8px}
 .recurring-card-counts{display:flex;gap:18px;font-size:10px;color:#9c9f8e}
 .recurring-card-counts span:first-child{color:#6b865b}

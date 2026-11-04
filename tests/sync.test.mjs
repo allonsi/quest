@@ -6,6 +6,7 @@ import { makeQuest, uid, validateQuests, startQuest, toggleGoal, claimReward, ca
 import { JournalSync } from '../web/sync.js';
 import { createAuthActions, validateCloudConfig, QuestRemote } from '../web/cloud.js';
 import { recordOccurrence, recurrenceCounts } from '../web/recurrence.js';
+import { questStatus } from '../web/time-limit.js';
 
 globalThis.Blob ??= Blob;
 globalThis.crypto ??= webcrypto;
@@ -65,6 +66,24 @@ await test('새 퀘스트를 다른 기기에서 불러온다', async () => {
   const s = server(), a = await device(s.forUser('A')), b = await device(s.forUser('A'));
   await a.save([quest('기기 간 기록')]); await a.sync(); await b.sync();
   assert.equal(b.quests[0].title, '기기 간 기록'); assert.equal(a.pendingCount, 0);
+});
+await test('기간·줄바꿈·재정렬·재등록이 다른 기기와 재실행에 보존된다', async () => {
+  const s = server(), local = disk(), a = await device(s.forUser('A'), local), b = await device(s.forUser('A'));
+  const now = new Date('2026-11-04T10:00:00Z');
+  const q = startQuest(makeQuest({ title: '기한 있는 모험', reward: '차', timeLimit: { mode: 'duration', minutes: 60 }, tasks: [
+    { id: 'second', title: '둘째\n여러 줄', kind: 'free', done: false },
+    { id: 'first', title: '첫째', kind: 'chain', done: false }
+  ] }), now);
+  await a.save([q]); await a.sync(); await b.sync();
+  assert.equal(b.quests[0].timeLimit.expiresAt, '2026-11-04T11:00:00.000Z');
+  assert.equal(b.quests[0].tasks[0].title, '둘째\n여러 줄');
+  assert.equal(b.quests[0].tasks[1].id, 'first');
+  assert.equal(questStatus(b.quests[0], new Date('2026-11-04T12:00:00Z')), 'expired');
+  await b.mutate(qs => { qs[0] = startQuest({ ...qs[0], timeLimit: { mode: 'fixed', expiresAt: '2026-11-05T10:00:00Z' } }, new Date('2026-11-04T12:00:00Z')); });
+  await b.sync(); await a.sync();
+  const reopened = await device(s.forUser('A'), local);
+  assert.equal(reopened.quests[0].timeLimit.mode, 'fixed');
+  assert.equal(questStatus(reopened.quests[0], new Date('2026-11-04T12:00:00Z')), 'active');
 });
 await test('반복 요일과 성공·실패 수정·취소가 다른 기기와 재실행에 보존된다', async () => {
   const s = server(), local = disk(), a = await device(s.forUser('A'), local), b = await device(s.forUser('A'));
